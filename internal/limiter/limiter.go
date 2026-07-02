@@ -1,5 +1,5 @@
 // Package limiter provides rate-limiting algorithms behind a single Limiter, interface
-// so callers can swap algoriths (token bucket, sliding window) without changing how they check requests
+// so callers can swap algorithms (token bucket, sliding window) without changing how they check requests
 package limiter
 
 import "time"
