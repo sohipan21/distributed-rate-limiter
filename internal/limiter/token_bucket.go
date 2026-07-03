@@ -23,13 +23,10 @@ type bucket struct {
 	last   time.Time
 }
 
-// panics if Limit or Window is not positive — a config bug, not a runtime condition
+// panics on an invalid config — a config bug, not a runtime condition
 func NewTokenBucket(cfg Config) *TokenBucket {
-	if cfg.Limit <= 0 {
-		panic("limiter: Config.Limit must be positive")
-	}
-	if cfg.Window <= 0 {
-		panic("limiter: Config.Window must be positive")
+	if err := cfg.Validate(); err != nil {
+		panic(err)
 	}
 	return &TokenBucket{
 		cfg:     cfg,
