@@ -5,33 +5,25 @@ import (
 	"time"
 )
 
-// TokenBucket is an in-memory token-bucket rate limiter.
-// Each key gets a bucket holding up to burst tokens. Tokens refill
-// continuously at Limit/Window, and every allowed request consumes one.
-// A request is denied when its key's bucket is empty. Tokens are tracked
-// fractionally so refill is smooth rather than stepped.
-//
-// It is safe for concurrent use.
+// in-memory token bucket limiter, safe for concurrent use. each key gets a
+// bucket of up to burst tokens refilling at Limit/Window; a request costs one
+// token and is denied when the bucket is empty
 type TokenBucket struct {
 	cfg  Config
-	rate float64 // tokens refilled per second
+	rate float64 // tokens per second
 
 	mu      sync.Mutex
 	buckets map[string]*bucket
 
-	// now returns the current time; injectable for deterministic tests.
-	now func() time.Time
+	now func() time.Time // injectable for tests
 }
 
-// bucket is the per-key state.
 type bucket struct {
-	tokens float64   // tokens currently available
-	last   time.Time // when tokens was last updated
+	tokens float64
+	last   time.Time
 }
 
-// NewTokenBucket returns a token-bucket limiter enforcing cfg.
-// It panics if cfg.Limit or cfg.Window is not positive, since a
-// zero-rate limiter is a configuration bug, not a runtime condition.
+// panics if Limit or Window is not positive — a config bug, not a runtime condition
 func NewTokenBucket(cfg Config) *TokenBucket {
 	if cfg.Limit <= 0 {
 		panic("limiter: Config.Limit must be positive")
@@ -47,8 +39,6 @@ func NewTokenBucket(cfg Config) *TokenBucket {
 	}
 }
 
-// Allow reports whether the request identified by key may proceed,
-// consuming one token if so.
 func (tb *TokenBucket) Allow(key string) Decision {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
@@ -62,7 +52,7 @@ func (tb *TokenBucket) Allow(key string) Decision {
 		tb.buckets[key] = b
 	}
 
-	// refill for the time elapsed since the last update.
+	// refill for the time elapsed since the last update
 	if elapsed := now.Sub(b.last); elapsed > 0 {
 		b.tokens = min(capacity, b.tokens+elapsed.Seconds()*tb.rate)
 	}
@@ -70,7 +60,7 @@ func (tb *TokenBucket) Allow(key string) Decision {
 
 	d := Decision{ResetAt: now.Add(tb.durationFor(capacity - b.tokens))}
 	if b.tokens < 1 {
-		// Denied: wait until a whole token has refilled.
+		// denied: wait for a whole token to refill
 		d.RetryAfter = tb.durationFor(1 - b.tokens)
 		return d
 	}
@@ -82,7 +72,7 @@ func (tb *TokenBucket) Allow(key string) Decision {
 	return d
 }
 
-// durationFor converts a token deficit into the time needed to refill it.
+// how long refilling that many tokens takes
 func (tb *TokenBucket) durationFor(tokens float64) time.Duration {
 	if tokens <= 0 {
 		return 0

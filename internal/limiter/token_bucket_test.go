@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// fakeClock is a manually-advanced clock so tests never sleep.
+// manually advanced clock so tests never sleep
 type fakeClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -28,7 +28,6 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
-// newTestBucket wires a TokenBucket to a fake clock.
 func newTestBucket(t *testing.T, cfg Config) (*TokenBucket, *fakeClock) {
 	t.Helper()
 	clock := newFakeClock()
@@ -65,7 +64,7 @@ func TestTokenBucketRefill(t *testing.T) {
 		t.Fatal("bucket exhausted but request allowed")
 	}
 
-	// 10 tokens/sec: 300ms refills exactly 3 tokens.
+	// at 10 tokens/sec, 300ms refills exactly 3
 	clock.Advance(300 * time.Millisecond)
 	for i := 0; i < 3; i++ {
 		if d := tb.Allow("k"); !d.Allowed {
@@ -73,7 +72,7 @@ func TestTokenBucketRefill(t *testing.T) {
 		}
 	}
 	if d := tb.Allow("k"); d.Allowed {
-		t.Fatal("4th request after 300ms allowed, want denied (only 3 tokens refilled)")
+		t.Fatal("4th request after 300ms allowed, want denied")
 	}
 }
 
@@ -91,11 +90,10 @@ func TestTokenBucketDenialSemantics(t *testing.T) {
 	if d.Remaining != 0 {
 		t.Errorf("Remaining = %d, want 0", d.Remaining)
 	}
-	// 2 tokens/sec: the next whole token is 500ms away.
+	// at 2 tokens/sec the next whole token is 500ms away, a full bucket 1s
 	if want := 500 * time.Millisecond; d.RetryAfter != want {
 		t.Errorf("RetryAfter = %v, want %v", d.RetryAfter, want)
 	}
-	// A full bucket (2 tokens) is 1s away.
 	if want := start.Add(time.Second); !d.ResetAt.Equal(want) {
 		t.Errorf("ResetAt = %v, want %v", d.ResetAt, want)
 	}
@@ -115,7 +113,7 @@ func TestTokenBucketAllowedSemantics(t *testing.T) {
 	if d.RetryAfter != 0 {
 		t.Errorf("RetryAfter = %v, want 0 on allow", d.RetryAfter)
 	}
-	// 4 tokens/sec, 1 consumed: full again in 250ms.
+	// 4 tokens/sec, 1 consumed: full again in 250ms
 	if want := start.Add(250 * time.Millisecond); !d.ResetAt.Equal(want) {
 		t.Errorf("ResetAt = %v, want %v", d.ResetAt, want)
 	}
@@ -125,7 +123,7 @@ func TestTokenBucketRefillCappedAtCapacity(t *testing.T) {
 	tb, clock := newTestBucket(t, Config{Limit: 3, Window: time.Second})
 
 	tb.Allow("k")
-	clock.Advance(time.Hour) // idle far longer than needed to refill
+	clock.Advance(time.Hour)
 
 	allowed := 0
 	for i := 0; i < 10; i++ {
@@ -139,7 +137,7 @@ func TestTokenBucketRefillCappedAtCapacity(t *testing.T) {
 }
 
 func TestTokenBucketBurstOverride(t *testing.T) {
-	// 1/sec steady rate, but a burst capacity of 5.
+	// 1/sec steady rate but a burst capacity of 5
 	tb, _ := newTestBucket(t, Config{Limit: 1, Window: time.Second, Burst: 5})
 
 	for i := 0; i < 5; i++ {
@@ -161,15 +159,13 @@ func TestTokenBucketPerKeyIsolation(t *testing.T) {
 	if d := tb.Allow("alice"); d.Allowed {
 		t.Fatal("alice's second request allowed, want denied")
 	}
-	// alice being throttled must not affect bob.
 	if d := tb.Allow("bob"); !d.Allowed {
 		t.Fatal("bob's first request denied, want allowed")
 	}
 }
 
 func TestTokenBucketConcurrentNoOvercount(t *testing.T) {
-	// Frozen clock: no refill during the test, so across all goroutines
-	// exactly capacity requests may succeed. Run with -race.
+	// frozen clock: no refill mid-test, so exactly capacity may succeed
 	const capacity = 100
 	tb, _ := newTestBucket(t, Config{Limit: capacity, Window: time.Minute})
 
