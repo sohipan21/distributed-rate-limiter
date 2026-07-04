@@ -22,6 +22,11 @@ func NewManager(p *Policies) *Manager {
 	}
 }
 
+// the limit that would apply to req, without counting anything
+func (m *Manager) Resolve(req Request) Limit {
+	return m.policies.Resolve(req)
+}
+
 // resolves the limit for req and counts identity against it. endpoint-scoped
 // rules count per identity+endpoint, everything else per identity alone;
 // tier never enters the key since an identity implies its tier
