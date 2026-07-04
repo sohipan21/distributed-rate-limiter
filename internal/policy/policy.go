@@ -94,10 +94,17 @@ func validateLimit(l Limit) error {
 // default. rules are pre-sorted, and within one specificity class at most
 // one rule can match, so the result is independent of registration order
 func (p *Policies) Resolve(req Request) Limit {
+	l, _ := p.match(req)
+	return l
+}
+
+// also reports whether the winning rule was endpoint-constrained, which
+// the manager needs to scope the counting key
+func (p *Policies) match(req Request) (Limit, bool) {
 	for _, r := range p.rules {
 		if r.matches(req) {
-			return r.Limit
+			return r.Limit, r.Endpoint != ""
 		}
 	}
-	return p.def
+	return p.def, false
 }
