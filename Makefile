@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy
+.PHONY: all fmt vet test bench build run tidy up down
 
 all: fmt vet test
 
@@ -22,3 +22,9 @@ run:
 
 tidy:
 	go mod tidy
+
+up:
+	docker compose up -d --wait
+
+down:
+	docker compose down
