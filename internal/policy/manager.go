@@ -10,14 +10,22 @@ import (
 // built lazily from the resolved limit. safe for concurrent use
 type Manager struct {
 	policies *Policies
+	factory  func(limiter.Algorithm, limiter.Config) limiter.Limiter
 
 	mu       sync.Mutex
 	limiters map[string]limiter.Limiter
 }
 
 func NewManager(p *Policies) *Manager {
+	return NewManagerWith(p, limiter.New)
+}
+
+// NewManagerWith lets the caller pick where limiter state lives
+// (in-memory, redis-backed)
+func NewManagerWith(p *Policies, factory func(limiter.Algorithm, limiter.Config) limiter.Limiter) *Manager {
 	return &Manager{
 		policies: p,
+		factory:  factory,
 		limiters: make(map[string]limiter.Limiter),
 	}
 }
@@ -41,7 +49,7 @@ func (m *Manager) Allow(req Request, identity string) limiter.Decision {
 	m.mu.Lock()
 	l, ok := m.limiters[key]
 	if !ok {
-		l = limiter.New(lim.Algorithm, lim.Config)
+		l = m.factory(lim.Algorithm, lim.Config)
 		m.limiters[key] = l
 	}
 	m.mu.Unlock()

@@ -3,6 +3,8 @@ package policy
 import (
 	"sync"
 	"testing"
+
+	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
 )
 
 // windows are long so refill/expiry never fires mid-test; time-based
@@ -139,6 +141,26 @@ func TestManagerConcurrentExactLimit(t *testing.T) {
 
 	if allowed != 100 {
 		t.Errorf("allowed %d of 500 concurrent requests, want exactly 100", allowed)
+	}
+}
+
+func TestManagerUsesInjectedFactory(t *testing.T) {
+	p, err := NewPolicies(lim(2))
+	if err != nil {
+		t.Fatalf("NewPolicies: %v", err)
+	}
+	calls := 0
+	m := NewManagerWith(p, func(a limiter.Algorithm, c limiter.Config) limiter.Limiter {
+		calls++
+		return limiter.New(a, c)
+	})
+
+	m.Allow(Request{}, "alice")
+	m.Allow(Request{}, "alice") // cached, no new construction
+	m.Allow(Request{}, "bob")
+
+	if calls != 2 {
+		t.Errorf("factory calls = %d, want 2 (one per distinct key)", calls)
 	}
 }
 
