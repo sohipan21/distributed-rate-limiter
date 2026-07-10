@@ -1,0 +1,32 @@
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 9000    299.99195/s
+    checks_succeeded...: 100.00% 9000 out of 9000
+    checks_failed......: 0.00%   0 out of 9000
+
+    ✓ decision returned
+
+    CUSTOM
+    rl_allowed.....................: 3800   126.663268/s
+    rl_denied......................: 5200   173.328682/s
+
+    HTTP
+    http_req_duration..............: avg=1.31ms min=518µs    med=1.12ms p(90)=2.02ms p(95)=2.41ms p(99)=3.65ms max=24.39ms
+      { expected_response:true }...: avg=1.31ms min=518µs    med=1.12ms p(90)=2.02ms p(95)=2.41ms p(99)=3.65ms max=24.39ms
+    http_req_failed................: 0.00%  0 out of 9000
+    http_reqs......................: 9000   299.99195/s
+
+    EXECUTION
+    iteration_duration.............: avg=1.47ms min=569.08µs med=1.27ms p(90)=2.28ms p(95)=2.67ms p(99)=3.98ms max=24.98ms
+    iterations.....................: 9000   299.99195/s
+    vus............................: 1      min=1         max=1 
+    vus_max........................: 50     min=50        max=50
+
+    NETWORK
+    data_received..................: 2.6 MB 85 kB/s
+    data_sent......................: 1.7 MB 56 kB/s
+
+
+

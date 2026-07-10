@@ -1,4 +1,8 @@
-.PHONY: all fmt vet test bench build run tidy up down
+.PHONY: all fmt vet test bench build run tidy up down loadtest
+
+BASE_URL ?= http://localhost:8080
+RATE ?= 300
+DURATION ?= 30s
 
 all: fmt vet test
 
@@ -28,3 +32,6 @@ up:
 
 down:
 	docker compose down
+
+loadtest:
+	k6 run -e BASE_URL=$(BASE_URL) -e RATE=$(RATE) -e DURATION=$(DURATION) loadtest/check.js
