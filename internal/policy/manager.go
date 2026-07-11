@@ -10,7 +10,7 @@ import (
 // built lazily from the resolved limit. safe for concurrent use
 type Manager struct {
 	policies *Policies
-	factory  func(limiter.Algorithm, limiter.Config) limiter.Limiter
+	factory  limiter.Factory
 
 	mu       sync.Mutex
 	limiters map[string]limiter.Limiter
@@ -22,7 +22,7 @@ func NewManager(p *Policies) *Manager {
 
 // NewManagerWith lets the caller pick where limiter state lives
 // (in-memory, redis-backed)
-func NewManagerWith(p *Policies, factory func(limiter.Algorithm, limiter.Config) limiter.Limiter) *Manager {
+func NewManagerWith(p *Policies, factory limiter.Factory) *Manager {
 	return &Manager{
 		policies: p,
 		factory:  factory,

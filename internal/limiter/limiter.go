@@ -20,6 +20,10 @@ type Limiter interface {
 	Allow(key string) Decision
 }
 
+// builds a limiter for an algorithm and config; lets callers choose where
+// limiter state lives (in-memory, redis)
+type Factory func(Algorithm, Config) Limiter
+
 // describes a rate limit in one vocabulary shared by all algorithms:
 // at most Limit events per Window
 type Config struct {

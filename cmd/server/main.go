@@ -42,16 +42,6 @@ func demoPolicies() *policy.Policies {
 	return p
 }
 
-// redis-backed limiters share counters across nodes; in-memory is per-process
-func redisFactory(rdb *redis.Client) func(limiter.Algorithm, limiter.Config) limiter.Limiter {
-	return func(a limiter.Algorithm, c limiter.Config) limiter.Limiter {
-		if a == limiter.SlidingWindowAlgorithm {
-			return store.NewSlidingWindow(rdb, c)
-		}
-		return store.NewTokenBucket(rdb, c)
-	}
-}
-
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	redisAddr := flag.String("redis", "", "redis address; empty runs in-memory limiters")
@@ -65,7 +55,7 @@ func main() {
 		if err := rdb.Ping(ctx).Err(); err != nil {
 			log.Fatalf("redis unreachable at %s: %v", *redisAddr, err)
 		}
-		m = policy.NewManagerWith(demoPolicies(), redisFactory(rdb))
+		m = policy.NewManagerWith(demoPolicies(), store.Factory(rdb))
 		log.Printf("limiter state in redis at %s", *redisAddr)
 	} else {
 		m = policy.NewManager(demoPolicies())
