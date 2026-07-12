@@ -28,6 +28,9 @@ type checkResponse struct {
 // with the decision
 func Handler(m *policy.Manager) http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
 	mux.HandleFunc("POST /check", func(w http.ResponseWriter, r *http.Request) {
 		var req checkRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

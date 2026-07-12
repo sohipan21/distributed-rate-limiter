@@ -167,6 +167,16 @@ func TestTierAndEndpointRouting(t *testing.T) {
 	}
 }
 
+func TestHealthz(t *testing.T) {
+	h := testHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || w.Body.String() != "ok" {
+		t.Errorf("healthz = %d %q, want 200 \"ok\"", w.Code, w.Body.String())
+	}
+}
+
 func TestMethodNotAllowed(t *testing.T) {
 	h := testHandler(t)
 	req := httptest.NewRequest(http.MethodGet, "/check", nil)
