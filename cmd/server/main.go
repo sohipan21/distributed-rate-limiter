@@ -51,18 +51,48 @@ func main() {
 	addr := flag.String("addr", ":8080", "http listen address")
 	grpcAddr := flag.String("grpc", ":9090", "grpc listen address; empty disables grpc")
 	redisAddr := flag.String("redis", "", "redis address; empty runs in-memory limiters")
+	degrade := flag.String("degrade", "open", "redis-down behavior: open (allow) or closed (deny)")
 	flag.Parse()
+
+	mode := store.FailOpen
+	switch *degrade {
+	case "open":
+	case "closed":
+		mode = store.FailClosed
+	default:
+		log.Fatalf("invalid -degrade %q (want open or closed)", *degrade)
+	}
 
 	var m *policy.Manager
 	if *redisAddr != "" {
-		rdb := redis.NewClient(&redis.Options{Addr: *redisAddr})
+		// short timeouts and no client retries bound worst-case decision
+		// latency to one attempt; the breaker owns what happens when redis
+		// is down, and stops paying even that once it's known-dead
+		rdb := redis.NewClient(&redis.Options{
+			Addr:         *redisAddr,
+			DialTimeout:  300 * time.Millisecond,
+			ReadTimeout:  300 * time.Millisecond,
+			WriteTimeout: 300 * time.Millisecond,
+			MaxRetries:   -1,
+		})
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := rdb.Ping(ctx).Err(); err != nil {
-			log.Fatalf("redis unreachable at %s: %v", *redisAddr, err)
+			// degradation exists so this isn't fatal: boot degraded, recover
+			// when redis shows up
+			log.Printf("redis unreachable at %s (%v), starting degraded", *redisAddr, err)
 		}
-		m = policy.NewManagerWith(demoPolicies(), store.Factory(rdb))
-		log.Printf("limiter state in redis at %s", *redisAddr)
+
+		br := store.NewBreaker(3, time.Second)
+		br.OnChange(func(degraded bool) {
+			if degraded {
+				log.Printf("degraded: redis unreachable, failing %s", *degrade)
+			} else {
+				log.Print("recovered: redis reachable again")
+			}
+		})
+		m = policy.NewManagerWith(demoPolicies(), store.Factory(rdb, store.WithMode(mode), store.WithBreaker(br)))
+		log.Printf("limiter state in redis at %s (fail-%s when unreachable)", *redisAddr, *degrade)
 	} else {
 		m = policy.NewManager(demoPolicies())
 		log.Print("limiter state in memory (single node only)")

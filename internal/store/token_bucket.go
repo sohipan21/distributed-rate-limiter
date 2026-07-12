@@ -20,16 +20,24 @@ type TokenBucket struct {
 	rdb    *redis.Client
 	cfg    limiter.Config
 	script *redis.Script
+	opts   options
 }
 
-func NewTokenBucket(rdb *redis.Client, cfg limiter.Config) *TokenBucket {
+func NewTokenBucket(rdb *redis.Client, cfg limiter.Config, opts ...Option) *TokenBucket {
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}
-	return &TokenBucket{rdb: rdb, cfg: cfg, script: redis.NewScript(tokenBucketScript)}
+	tb := &TokenBucket{rdb: rdb, cfg: cfg, script: redis.NewScript(tokenBucketScript)}
+	for _, fn := range opts {
+		fn(&tb.opts)
+	}
+	return tb
 }
 
 func (t *TokenBucket) Allow(key string) limiter.Decision {
+	if !t.opts.breaker.allow() {
+		return degradedDecision(t.opts.mode)
+	}
 	burst := t.cfg.Burst
 	if burst <= 0 {
 		burst = t.cfg.Limit
@@ -39,8 +47,10 @@ func (t *TokenBucket) Allow(key string) limiter.Decision {
 		t.cfg.Limit, t.cfg.Window.Microseconds(), burst,
 	).Int64Slice()
 	if err != nil {
-		return limiter.Decision{} // fail closed; week 3 makes this configurable
+		t.opts.breaker.failure()
+		return degradedDecision(t.opts.mode)
 	}
+	t.opts.breaker.success()
 	return decode(res)
 }
 

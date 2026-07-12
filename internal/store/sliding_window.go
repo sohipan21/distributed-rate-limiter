@@ -20,16 +20,24 @@ type SlidingWindow struct {
 	rdb    *redis.Client
 	cfg    limiter.Config
 	script *redis.Script
+	opts   options
 }
 
-func NewSlidingWindow(rdb *redis.Client, cfg limiter.Config) *SlidingWindow {
+func NewSlidingWindow(rdb *redis.Client, cfg limiter.Config, opts ...Option) *SlidingWindow {
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}
-	return &SlidingWindow{rdb: rdb, cfg: cfg, script: redis.NewScript(slidingWindowScript)}
+	sw := &SlidingWindow{rdb: rdb, cfg: cfg, script: redis.NewScript(slidingWindowScript)}
+	for _, fn := range opts {
+		fn(&sw.opts)
+	}
+	return sw
 }
 
 func (s *SlidingWindow) Allow(key string) limiter.Decision {
+	if !s.opts.breaker.allow() {
+		return degradedDecision(s.opts.mode)
+	}
 	// nonce disambiguates two requests landing in the same microsecond so
 	// they don't collapse into one sorted-set member
 	res, err := s.script.Run(context.Background(), s.rdb,
@@ -37,7 +45,9 @@ func (s *SlidingWindow) Allow(key string) limiter.Decision {
 		s.cfg.Limit, s.cfg.Window.Microseconds(), rand.Int64(),
 	).Int64Slice()
 	if err != nil {
-		return limiter.Decision{} // fail closed; week 3 makes this configurable
+		s.opts.breaker.failure()
+		return degradedDecision(s.opts.mode)
 	}
+	s.opts.breaker.success()
 	return decode(res)
 }

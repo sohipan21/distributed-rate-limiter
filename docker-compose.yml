@@ -11,7 +11,7 @@ services:
 
   node1: &node
     build: .
-    command: ["-redis", "redis:6379"]
+    command: ["-redis", "redis:6379", "-degrade", "open"]
     depends_on:
       redis:
         condition: service_healthy
