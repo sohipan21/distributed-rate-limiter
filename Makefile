@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up down loadtest
+.PHONY: all fmt vet test bench build run tidy up down loadtest proto
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -35,3 +35,9 @@ down:
 
 loadtest:
 	k6 run -e BASE_URL=$(BASE_URL) -e RATE=$(RATE) -e DURATION=$(DURATION) loadtest/check.js
+
+proto:
+	PATH="$(HOME)/go/bin:$$PATH" protoc \
+		--go_out=. --go_opt=module=github.com/sohipan21/distributed-rate-limiter \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/sohipan21/distributed-rate-limiter \
+		proto/ratelimit/v1/ratelimit.proto

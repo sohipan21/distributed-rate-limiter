@@ -4,11 +4,16 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
+	ratelimitv1 "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1"
+	"github.com/sohipan21/distributed-rate-limiter/internal/grpcapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/httpapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
 	"github.com/sohipan21/distributed-rate-limiter/internal/policy"
@@ -43,7 +48,8 @@ func demoPolicies() *policy.Policies {
 }
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", ":8080", "http listen address")
+	grpcAddr := flag.String("grpc", ":9090", "grpc listen address; empty disables grpc")
 	redisAddr := flag.String("redis", "", "redis address; empty runs in-memory limiters")
 	flag.Parse()
 
@@ -62,6 +68,18 @@ func main() {
 		log.Print("limiter state in memory (single node only)")
 	}
 
-	log.Printf("rate limiter listening on %s", *addr)
+	if *grpcAddr != "" {
+		lis, err := net.Listen("tcp", *grpcAddr)
+		if err != nil {
+			log.Fatalf("grpc listen: %v", err)
+		}
+		srv := grpc.NewServer()
+		ratelimitv1.RegisterRateLimiterServer(srv, grpcapi.NewServer(m))
+		reflection.Register(srv) // lets grpcurl discover the service
+		go func() { log.Fatal(srv.Serve(lis)) }()
+		log.Printf("grpc listening on %s", *grpcAddr)
+	}
+
+	log.Printf("http listening on %s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, httpapi.Handler(m)))
 }

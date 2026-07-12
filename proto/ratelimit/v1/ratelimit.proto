@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package ratelimit.v1;
+
+option go_package = "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1;ratelimitv1";
+
+service RateLimiter {
+  // resolves the caller's limit, counts the request, returns the decision
+  rpc Check(CheckRequest) returns (CheckResponse);
+}
+
+message CheckRequest {
+  string identity = 1; // who is being limited; required
+  string tier = 2;
+  string endpoint = 3;
+}
+
+// mirrors the HTTP response contract: plain seconds and unix timestamps,
+// same numbers whichever API a client uses
+message CheckResponse {
+  bool allowed = 1;
+  int64 limit = 2;
+  int64 remaining = 3;
+  int64 retry_after_seconds = 4; // rounded up, at least 1 when denied
+  int64 reset_at_unix = 5;
+}
