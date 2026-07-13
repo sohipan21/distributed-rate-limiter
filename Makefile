@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up down loadtest proto
+.PHONY: all fmt vet test bench build run tidy up down loadtest proto demo
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -35,6 +35,9 @@ down:
 
 loadtest:
 	k6 run -e BASE_URL=$(BASE_URL) -e RATE=$(RATE) -e DURATION=$(DURATION) loadtest/check.js
+
+demo:
+	./demo/kill-redis.sh
 
 proto:
 	PATH="$(HOME)/go/bin:$$PATH" protoc \
