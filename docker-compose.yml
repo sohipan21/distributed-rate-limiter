@@ -36,6 +36,20 @@ services:
       - "8083:8080"
       - "9093:9090"
 
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      node1:
+        condition: service_healthy
+      node2:
+        condition: service_healthy
+      node3:
+        condition: service_healthy
+
   nginx:
     image: nginx:alpine
     volumes:

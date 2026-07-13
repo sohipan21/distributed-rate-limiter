@@ -15,9 +15,15 @@ const (
 	FailClosed
 )
 
+// receives every redis round trip; implemented by the metrics package
+type Observer interface {
+	ObserveRedis(algorithm string, d time.Duration, ok bool)
+}
+
 type options struct {
-	mode    Mode
-	breaker *Breaker
+	mode     Mode
+	breaker  *Breaker
+	observer Observer
 }
 
 type Option func(*options)
@@ -28,6 +34,10 @@ func WithMode(m Mode) Option {
 
 func WithBreaker(b *Breaker) Option {
 	return func(o *options) { o.breaker = b }
+}
+
+func WithObserver(obs Observer) Option {
+	return func(o *options) { o.observer = obs }
 }
 
 // the decision handed out while degraded. client clock is fine here —

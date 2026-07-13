@@ -16,6 +16,7 @@ import (
 	"github.com/sohipan21/distributed-rate-limiter/internal/grpcapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/httpapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
+	"github.com/sohipan21/distributed-rate-limiter/internal/metrics"
 	"github.com/sohipan21/distributed-rate-limiter/internal/policy"
 	"github.com/sohipan21/distributed-rate-limiter/internal/store"
 )
@@ -63,6 +64,8 @@ func main() {
 		log.Fatalf("invalid -degrade %q (want open or closed)", *degrade)
 	}
 
+	mx := metrics.New()
+
 	var m *policy.Manager
 	if *redisAddr != "" {
 		// short timeouts and no client retries bound worst-case decision
@@ -85,16 +88,19 @@ func main() {
 
 		br := store.NewBreaker(3, time.Second)
 		br.OnChange(func(degraded bool) {
+			mx.SetDegraded(degraded)
 			if degraded {
+				mx.DegradationEvent()
 				log.Printf("degraded: redis unreachable, failing %s", *degrade)
 			} else {
 				log.Print("recovered: redis reachable again")
 			}
 		})
-		m = policy.NewManagerWith(demoPolicies(), store.Factory(rdb, store.WithMode(mode), store.WithBreaker(br)))
+		factory := store.Factory(rdb, store.WithMode(mode), store.WithBreaker(br), store.WithObserver(mx))
+		m = policy.NewManagerWith(demoPolicies(), factory, policy.WithObserver(mx))
 		log.Printf("limiter state in redis at %s (fail-%s when unreachable)", *redisAddr, *degrade)
 	} else {
-		m = policy.NewManager(demoPolicies())
+		m = policy.NewManagerWith(demoPolicies(), limiter.New, policy.WithObserver(mx))
 		log.Print("limiter state in memory (single node only)")
 	}
 
@@ -110,6 +116,10 @@ func main() {
 		log.Printf("grpc listening on %s", *grpcAddr)
 	}
 
+	mux := http.NewServeMux()
+	mux.Handle("/metrics", mx.Handler())
+	mux.Handle("/", httpapi.Handler(m))
+
 	log.Printf("http listening on %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, httpapi.Handler(m)))
+	log.Fatal(http.ListenAndServe(*addr, mux))
 }

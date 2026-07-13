@@ -3,6 +3,7 @@ package policy
 import (
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
 )
@@ -141,6 +142,42 @@ func TestManagerConcurrentExactLimit(t *testing.T) {
 
 	if allowed != 100 {
 		t.Errorf("allowed %d of 500 concurrent requests, want exactly 100", allowed)
+	}
+}
+
+type decisionRecord struct {
+	tier, endpoint string
+	allowed        bool
+	d              time.Duration
+}
+
+type fakeObserver struct{ records []decisionRecord }
+
+func (f *fakeObserver) ObserveDecision(tier, endpoint string, allowed bool, d time.Duration) {
+	f.records = append(f.records, decisionRecord{tier, endpoint, allowed, d})
+}
+
+func TestManagerReportsToObserver(t *testing.T) {
+	p, err := NewPolicies(lim(1))
+	if err != nil {
+		t.Fatalf("NewPolicies: %v", err)
+	}
+	fo := &fakeObserver{}
+	m := NewManagerWith(p, limiter.New, WithObserver(fo))
+
+	req := Request{Tier: "free", Endpoint: "/x"}
+	m.Allow(req, "alice") // allowed
+	m.Allow(req, "alice") // denied, limit 1
+
+	if len(fo.records) != 2 {
+		t.Fatalf("observer saw %d decisions, want 2", len(fo.records))
+	}
+	first, second := fo.records[0], fo.records[1]
+	if first.tier != "free" || first.endpoint != "/x" {
+		t.Errorf("labels = %q %q, want free /x", first.tier, first.endpoint)
+	}
+	if !first.allowed || second.allowed {
+		t.Errorf("allowed sequence = %v, %v; want true, false", first.allowed, second.allowed)
 	}
 }
 

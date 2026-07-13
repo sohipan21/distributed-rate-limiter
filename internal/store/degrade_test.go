@@ -73,6 +73,29 @@ func TestBreakerShortCircuitsRequests(t *testing.T) {
 	}
 }
 
+type fakeRedisObserver struct {
+	calls  int
+	lastOK bool
+}
+
+func (f *fakeRedisObserver) ObserveRedis(algorithm string, d time.Duration, ok bool) {
+	f.calls++
+	f.lastOK = ok
+}
+
+func TestObserverSeesRedisErrors(t *testing.T) {
+	rdb := deadClient()
+	defer rdb.Close()
+	fo := &fakeRedisObserver{}
+	tb := NewTokenBucket(rdb, limiter.Config{Limit: 10, Window: time.Minute},
+		WithMode(FailOpen), WithObserver(fo))
+
+	tb.Allow("k")
+	if fo.calls != 1 || fo.lastOK {
+		t.Errorf("observer calls = %d lastOK = %v, want 1 call with ok=false", fo.calls, fo.lastOK)
+	}
+}
+
 func TestFactorySharesOneBreaker(t *testing.T) {
 	rdb := deadClient()
 	defer rdb.Close()

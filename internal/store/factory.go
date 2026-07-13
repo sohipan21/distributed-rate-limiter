@@ -20,7 +20,7 @@ func Factory(rdb *redis.Client, opts ...Option) limiter.Factory {
 	if o.breaker == nil {
 		o.breaker = NewBreaker(3, time.Second)
 	}
-	shared := []Option{WithMode(o.mode), WithBreaker(o.breaker)}
+	shared := []Option{WithMode(o.mode), WithBreaker(o.breaker), WithObserver(o.observer)}
 
 	return func(a limiter.Algorithm, c limiter.Config) limiter.Limiter {
 		if a == limiter.SlidingWindowAlgorithm {

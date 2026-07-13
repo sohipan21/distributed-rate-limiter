@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"math/rand/v2"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -40,10 +41,14 @@ func (s *SlidingWindow) Allow(key string) limiter.Decision {
 	}
 	// nonce disambiguates two requests landing in the same microsecond so
 	// they don't collapse into one sorted-set member
+	start := time.Now()
 	res, err := s.script.Run(context.Background(), s.rdb,
 		[]string{key},
 		s.cfg.Limit, s.cfg.Window.Microseconds(), rand.Int64(),
 	).Int64Slice()
+	if s.opts.observer != nil {
+		s.opts.observer.ObserveRedis(string(limiter.SlidingWindowAlgorithm), time.Since(start), err == nil)
+	}
 	if err != nil {
 		s.opts.breaker.failure()
 		return degradedDecision(s.opts.mode)

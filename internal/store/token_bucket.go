@@ -42,10 +42,14 @@ func (t *TokenBucket) Allow(key string) limiter.Decision {
 	if burst <= 0 {
 		burst = t.cfg.Limit
 	}
+	start := time.Now()
 	res, err := t.script.Run(context.Background(), t.rdb,
 		[]string{key},
 		t.cfg.Limit, t.cfg.Window.Microseconds(), burst,
 	).Int64Slice()
+	if t.opts.observer != nil {
+		t.opts.observer.ObserveRedis(string(limiter.TokenBucketAlgorithm), time.Since(start), err == nil)
+	}
 	if err != nil {
 		t.opts.breaker.failure()
 		return degradedDecision(t.opts.mode)

@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: ratelimiter
+    static_configs:
+      - targets: ["node1:8080", "node2:8080", "node3:8080"]
