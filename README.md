@@ -1,5 +1,7 @@
 # Distributed Rate Limiter
 
+[![tests](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/test.yml/badge.svg)](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/test.yml)
+
 A rate limiter is the part of a service that decides "has this user made too
 many requests, yes or no," and turns away the extras. This one runs as many
 copies at once, all sharing a single count, so the limit holds no matter which
