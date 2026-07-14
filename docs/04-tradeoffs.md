@@ -1,10 +1,10 @@
 # Consistency vs availability
 
-Counting correctly across nodes means one shared counter in Redis (see
-[docs/02](02-atomicity.md)). That's the right call, but it has a cost. Every
-node now depends on Redis. So when Redis is unreachable, there's a choice with
-no clean answer. You can keep the limits correct, or you can keep serving
-traffic. You can't do both.
+Counting correctly across nodes means one shared counter in Redis (the
+[README](../README.md) explains how that stays correct). That's the right
+call, but it has a cost. Every node now depends on Redis. So when Redis is
+unreachable, there's a choice with no clean answer. You can keep the limits
+correct, or you can keep serving traffic. You can't do both.
 
 ```
 healthy:        node -> redis -> exact count
@@ -23,9 +23,9 @@ throttling like free vs paid tiers or stopping a noisy client, a short window
 where limits aren't enforced is annoying but survivable. A full outage is not.
 
 So the default keeps the service up. You lose enforcement for a few seconds
-until Redis comes back, and the demo in [docs/03](03-demo.md) shows exactly
-that. The circuit breaker keeps that window cheap. It stops hammering a dead
-Redis after a few failures instead of adding latency to every request.
+until Redis comes back, and `make demo` shows exactly that. The circuit
+breaker keeps that window cheap. It stops hammering a dead Redis after a few
+failures instead of adding latency to every request.
 
 ## When I'd flip it to fail-closed
 
