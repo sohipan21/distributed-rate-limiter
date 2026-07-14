@@ -11,6 +11,8 @@ import { Counter } from 'k6/metrics';
 const BASE_URL = __ENV.BASE_URL || 'http://localhost:8080';
 const RATE = Number(__ENV.RATE || 300);
 const DURATION = __ENV.DURATION || '30s';
+const VUS = Number(__ENV.VUS || 50);
+const MAX_VUS = Number(__ENV.MAX_VUS || 200);
 
 export const options = {
   scenarios: {
@@ -19,8 +21,8 @@ export const options = {
       rate: RATE,
       timeUnit: '1s',
       duration: DURATION,
-      preAllocatedVUs: 50,
-      maxVUs: 200,
+      preAllocatedVUs: VUS,
+      maxVUs: MAX_VUS,
     },
   },
 };
