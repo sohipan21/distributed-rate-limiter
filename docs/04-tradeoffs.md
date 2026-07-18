@@ -1,10 +1,27 @@
 # Consistency vs availability
 
-Counting correctly across nodes means one shared counter in Redis (the
-[README](../README.md) explains how that stays correct). That's the right
-call, but it has a cost. Every node now depends on Redis. So when Redis is
-unreachable, there's a choice with no clean answer. You can keep the limits
-correct, or you can keep serving traffic. You can't do both.
+## Getting the count right
+
+The obvious way to count is: read the current number, add one, write it back.
+That breaks the moment two nodes do it at the same time. Both read "9 so far",
+both decide the request is fine, both write "10". One request just got lost,
+and the limit leaks. Under a real concurrent flood it leaks badly — the
+concurrency test in `internal/store` pushes 500 requests through a limit of
+100 with the naive version.
+
+The fix is to make check-and-update a single step that nothing can interrupt.
+Here that step is a Lua script executed inside Redis, which handles one script
+at a time, so across every node the count can only move one request at a time.
+The scripts also read Redis's own clock (`TIME`) instead of the node's, so a
+window boundary is the same instant on every node even when their local clocks
+drift.
+
+## The cost: every node depends on Redis
+
+One shared counter is what makes the limit exact, but it also means every node
+now depends on Redis. So when Redis is unreachable, there's a choice with no
+clean answer. You can keep the limits correct, or you can keep serving
+traffic. You can't do both.
 
 ```
 healthy:        node -> redis -> exact count
