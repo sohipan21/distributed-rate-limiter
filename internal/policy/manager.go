@@ -2,6 +2,7 @@ package policy
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
@@ -14,9 +15,10 @@ type Observer interface {
 }
 
 // enforces policies by keeping one live limiter per counting key,
-// built lazily from the resolved limit. safe for concurrent use
+// built lazily from the resolved limit. safe for concurrent use;
+// policies swap atomically so reloads never block the hot path
 type Manager struct {
-	policies *Policies
+	policies atomic.Pointer[Policies]
 	factory  limiter.Factory
 	observer Observer
 
@@ -38,26 +40,36 @@ func NewManager(p *Policies) *Manager {
 // (in-memory, redis-backed)
 func NewManagerWith(p *Policies, factory limiter.Factory, opts ...ManagerOption) *Manager {
 	m := &Manager{
-		policies: p,
 		factory:  factory,
 		limiters: make(map[string]limiter.Limiter),
 	}
+	m.policies.Store(p)
 	for _, fn := range opts {
 		fn(m)
 	}
 	return m
 }
 
+// SetPolicies swaps in a new policy set (config reload). cached limiters are
+// dropped so new limits apply immediately; in-flight counters reset, which is
+// the documented cost of a reload
+func (m *Manager) SetPolicies(p *Policies) {
+	m.policies.Store(p)
+	m.mu.Lock()
+	clear(m.limiters)
+	m.mu.Unlock()
+}
+
 // the limit that would apply to req, without counting anything
 func (m *Manager) Resolve(req Request) Limit {
-	return m.policies.Resolve(req)
+	return m.policies.Load().Resolve(req)
 }
 
 // resolves the limit for req and counts identity against it. endpoint-scoped
 // rules count per identity+endpoint, everything else per identity alone;
 // tier never enters the key since an identity implies its tier
 func (m *Manager) Allow(req Request, identity string) limiter.Decision {
-	lim, endpointScoped := m.policies.match(req)
+	lim, endpointScoped := m.policies.Load().match(req)
 
 	key := identity
 	if endpointScoped {

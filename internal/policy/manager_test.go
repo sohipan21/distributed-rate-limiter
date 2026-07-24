@@ -114,6 +114,36 @@ func TestManagerReusesCachedLimiter(t *testing.T) {
 	}
 }
 
+func TestManagerSetPoliciesAppliesNewLimits(t *testing.T) {
+	p1, err := NewPolicies(lim(2))
+	if err != nil {
+		t.Fatalf("NewPolicies: %v", err)
+	}
+	m := NewManager(p1)
+	req := Request{Tier: "free", Endpoint: "/x"}
+
+	m.Allow(req, "alice")
+	m.Allow(req, "alice")
+	if m.Allow(req, "alice").Allowed {
+		t.Fatal("third request allowed under limit 2")
+	}
+
+	// reload with a bigger limit: takes effect immediately, counters reset
+	p2, err := NewPolicies(lim(5))
+	if err != nil {
+		t.Fatalf("NewPolicies: %v", err)
+	}
+	m.SetPolicies(p2)
+
+	if got := m.Resolve(req).Config.Limit; got != 5 {
+		t.Errorf("Resolve after reload = %d, want 5", got)
+	}
+	d := m.Allow(req, "alice")
+	if !d.Allowed || d.Remaining != 4 {
+		t.Errorf("post-reload decision = %+v, want allowed with 4 remaining (fresh limiter)", d)
+	}
+}
+
 func TestManagerConcurrentExactLimit(t *testing.T) {
 	p, err := NewPolicies(lim(100))
 	if err != nil {

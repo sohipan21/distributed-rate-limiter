@@ -1,0 +1,17 @@
+# example service config: rate-limit policies and api keys.
+# run with:  go run ./cmd/server -config config.example.yaml
+# reload after editing:  kill -HUP <pid>
+policies:
+  default: {limit: 60, window: 1m}
+  tiers:
+    free: {limit: 10, window: 1m}
+    paid: {limit: 100, window: 1m}
+  endpoints:
+    # endpoint rules beat tier rules; sliding_window enforces a hard cap
+    /upload: {limit: 5, window: 1m, algorithm: sliding_window}
+
+# keys the service accepts when auth is on. tier comes from here,
+# never from the client
+api_keys:
+  k_free_demo: {account: alice, tier: free}
+  k_paid_demo: {account: bob, tier: paid}

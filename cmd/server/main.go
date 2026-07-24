@@ -6,6 +6,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -13,6 +16,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	ratelimitv1 "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1"
+	"github.com/sohipan21/distributed-rate-limiter/internal/config"
 	"github.com/sohipan21/distributed-rate-limiter/internal/grpcapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/httpapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
@@ -21,7 +25,7 @@ import (
 	"github.com/sohipan21/distributed-rate-limiter/internal/store"
 )
 
-// hardcoded demo policies until config loading arrives with the redis work
+// built-in fallback so the server runs with zero config; -config overrides
 func demoPolicies() *policy.Policies {
 	tb := func(n int) policy.Limit {
 		return policy.Limit{
@@ -53,7 +57,18 @@ func main() {
 	grpcAddr := flag.String("grpc", ":9090", "grpc listen address; empty disables grpc")
 	redisAddr := flag.String("redis", "", "redis address; empty runs in-memory limiters")
 	degrade := flag.String("degrade", "open", "redis-down behavior: open (allow) or closed (deny)")
+	configPath := flag.String("config", "", "yaml config file; empty uses built-in demo policies")
 	flag.Parse()
+
+	policies := demoPolicies()
+	if *configPath != "" {
+		cfg, err := config.Load(*configPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		policies = cfg.Policies
+		log.Printf("policies loaded from %s", *configPath)
+	}
 
 	mode := store.FailOpen
 	switch *degrade {
@@ -97,11 +112,29 @@ func main() {
 			}
 		})
 		factory := store.Factory(rdb, store.WithMode(mode), store.WithBreaker(br), store.WithObserver(mx))
-		m = policy.NewManagerWith(demoPolicies(), factory, policy.WithObserver(mx))
+		m = policy.NewManagerWith(policies, factory, policy.WithObserver(mx))
 		log.Printf("limiter state in redis at %s (fail-%s when unreachable)", *redisAddr, *degrade)
 	} else {
-		m = policy.NewManagerWith(demoPolicies(), limiter.New, policy.WithObserver(mx))
+		m = policy.NewManagerWith(policies, limiter.New, policy.WithObserver(mx))
 		log.Print("limiter state in memory (single node only)")
+	}
+
+	// sighup reloads the config file without a restart; a bad edit keeps
+	// the current policies and logs why
+	if *configPath != "" {
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
+		go func() {
+			for range hup {
+				cfg, err := config.Load(*configPath)
+				if err != nil {
+					log.Printf("config reload failed, keeping current policies: %v", err)
+					continue
+				}
+				m.SetPolicies(cfg.Policies)
+				log.Printf("policies reloaded from %s", *configPath)
+			}
+		}()
 	}
 
 	if *grpcAddr != "" {
