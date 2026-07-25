@@ -8,6 +8,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	ratelimitv1 "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1"
@@ -17,12 +18,18 @@ import (
 // the real service
 type fakeServer struct {
 	ratelimitv1.UnimplementedRateLimiterServer
-	resp *ratelimitv1.CheckResponse
-	req  *ratelimitv1.CheckRequest
+	resp   *ratelimitv1.CheckResponse
+	req    *ratelimitv1.CheckRequest
+	apiKey string
 }
 
 func (f *fakeServer) Check(ctx context.Context, req *ratelimitv1.CheckRequest) (*ratelimitv1.CheckResponse, error) {
 	f.req = req
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if v := md.Get("x-api-key"); len(v) > 0 {
+			f.apiKey = v[0]
+		}
+	}
 	return f.resp, nil
 }
 
@@ -50,7 +57,7 @@ func TestClientMapsResponse(t *testing.T) {
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	d, err := NewClient(conn).Check(context.Background(), Request{Identity: "alice", Tier: "free", Endpoint: "/download"})
+	d, err := NewClient(conn).Check(context.Background(), Request{APIKey: "k_test", Identity: "alice", Tier: "free", Endpoint: "/download"})
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -67,5 +74,9 @@ func TestClientMapsResponse(t *testing.T) {
 	// request fields propagate
 	if fake.req.GetIdentity() != "alice" || fake.req.GetTier() != "free" || fake.req.GetEndpoint() != "/download" {
 		t.Errorf("server saw %+v, want alice/free/download", fake.req)
+	}
+	// the api key travels as metadata, not a proto field
+	if fake.apiKey != "k_test" {
+		t.Errorf("server saw api key %q in metadata, want k_test", fake.apiKey)
 	}
 }

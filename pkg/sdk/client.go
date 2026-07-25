@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	ratelimitv1 "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1"
 )
@@ -31,6 +32,9 @@ func Dial(target string) (*Client, error) {
 }
 
 func (c *Client) Check(ctx context.Context, req Request) (Decision, error) {
+	if req.APIKey != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-api-key", req.APIKey)
+	}
 	resp, err := c.grpc.Check(ctx, &ratelimitv1.CheckRequest{
 		Identity: req.Identity,
 		Tier:     req.Tier,

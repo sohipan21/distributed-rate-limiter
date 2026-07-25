@@ -16,9 +16,10 @@ type config struct {
 
 type Option func(*config)
 
-// WithKeyFunc overrides how a caller is identified. The default reads the
-// X-API-Key header (falling back to the request host), the X-Tier header, and
-// the URL path.
+// WithKeyFunc overrides how a caller is identified. The default forwards the
+// X-API-Key header (auth-on servers derive identity and tier from it), sets
+// Identity to the key or the remote address for auth-off servers, and uses
+// the URL path as the endpoint. Tier is never taken from the client.
 func WithKeyFunc(fn KeyFunc) Option {
 	return func(c *config) { c.keyFunc = fn }
 }
@@ -70,13 +71,14 @@ func Middleware(checker Checker, opts ...Option) func(http.Handler) http.Handler
 }
 
 func defaultKeyFunc(r *http.Request) Request {
-	identity := r.Header.Get("X-API-Key")
+	key := r.Header.Get("X-API-Key")
+	identity := key
 	if identity == "" {
 		identity = r.RemoteAddr
 	}
 	return Request{
+		APIKey:   key,
 		Identity: identity,
-		Tier:     r.Header.Get("X-Tier"),
 		Endpoint: r.URL.Path,
 	}
 }

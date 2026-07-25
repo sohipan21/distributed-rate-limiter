@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	ratelimitv1 "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1"
+	"github.com/sohipan21/distributed-rate-limiter/internal/auth"
 	"github.com/sohipan21/distributed-rate-limiter/internal/config"
 	"github.com/sohipan21/distributed-rate-limiter/internal/grpcapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/httpapi"
@@ -24,6 +25,17 @@ import (
 	"github.com/sohipan21/distributed-rate-limiter/internal/policy"
 	"github.com/sohipan21/distributed-rate-limiter/internal/store"
 )
+
+func toIdentities(keys map[string]config.APIKey) map[string]auth.Identity {
+	if len(keys) == 0 {
+		return nil
+	}
+	out := make(map[string]auth.Identity, len(keys))
+	for k, v := range keys {
+		out[k] = auth.Identity{Account: v.Account, Tier: v.Tier}
+	}
+	return out
+}
 
 // built-in fallback so the server runs with zero config; -config overrides
 func demoPolicies() *policy.Policies {
@@ -61,13 +73,26 @@ func main() {
 	flag.Parse()
 
 	policies := demoPolicies()
+	var apiKeys map[string]auth.Identity
 	if *configPath != "" {
 		cfg, err := config.Load(*configPath)
 		if err != nil {
 			log.Fatal(err)
 		}
 		policies = cfg.Policies
+		apiKeys = toIdentities(cfg.APIKeys)
 		log.Printf("policies loaded from %s", *configPath)
+	}
+
+	// auth is on iff the config defines api keys; decided at boot
+	var memAuth *auth.Memory
+	var authn auth.Authenticator
+	if len(apiKeys) > 0 {
+		memAuth = auth.NewMemory(apiKeys)
+		authn = memAuth
+		log.Printf("auth on: %d api keys, identity and tier come from the key", len(apiKeys))
+	} else {
+		log.Print("auth off: identity and tier trusted from the client (demo mode)")
 	}
 
 	mode := store.FailOpen
@@ -101,6 +126,17 @@ func main() {
 			log.Printf("redis unreachable at %s (%v), starting degraded", *redisAddr, err)
 		}
 
+		// redis-backed keys let ops add keys at runtime; the memory
+		// backend stays first in the chain so config keys survive a
+		// redis outage
+		if memAuth != nil {
+			ra := auth.NewRedis(rdb)
+			if err := ra.Seed(ctx, apiKeys); err != nil {
+				log.Printf("api key seed to redis failed (config keys still work): %v", err)
+			}
+			authn = auth.Chain{memAuth, ra}
+		}
+
 		br := store.NewBreaker(3, time.Second)
 		br.OnChange(func(degraded bool) {
 			mx.SetDegraded(degraded)
@@ -132,6 +168,9 @@ func main() {
 					continue
 				}
 				m.SetPolicies(cfg.Policies)
+				if memAuth != nil {
+					memAuth.Set(toIdentities(cfg.APIKeys))
+				}
 				log.Printf("policies reloaded from %s", *configPath)
 			}
 		}()
@@ -142,16 +181,24 @@ func main() {
 		if err != nil {
 			log.Fatalf("grpc listen: %v", err)
 		}
+		var grpcOpts []grpcapi.Option
+		if authn != nil {
+			grpcOpts = append(grpcOpts, grpcapi.WithAuth(authn))
+		}
 		srv := grpc.NewServer()
-		ratelimitv1.RegisterRateLimiterServer(srv, grpcapi.NewServer(m))
+		ratelimitv1.RegisterRateLimiterServer(srv, grpcapi.NewServer(m, grpcOpts...))
 		reflection.Register(srv) // lets grpcurl discover the service
 		go func() { log.Fatal(srv.Serve(lis)) }()
 		log.Printf("grpc listening on %s", *grpcAddr)
 	}
 
+	var httpOpts []httpapi.Option
+	if authn != nil {
+		httpOpts = append(httpOpts, httpapi.WithAuth(authn))
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", mx.Handler())
-	mux.Handle("/", httpapi.Handler(m))
+	mux.Handle("/", httpapi.Handler(m, httpOpts...))
 
 	log.Printf("http listening on %s", *addr)
 	log.Fatal(http.ListenAndServe(*addr, mux))

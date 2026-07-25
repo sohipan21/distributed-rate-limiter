@@ -8,8 +8,21 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/sohipan21/distributed-rate-limiter/internal/auth"
 	"github.com/sohipan21/distributed-rate-limiter/internal/policy"
 )
+
+type options struct {
+	auth auth.Authenticator
+}
+
+type Option func(*options)
+
+// WithAuth turns on api-key auth: identity and tier come from the key
+// lookup, and the client's own identity/tier fields are ignored
+func WithAuth(a auth.Authenticator) Option {
+	return func(o *options) { o.auth = a }
+}
 
 type checkRequest struct {
 	Identity string `json:"identity"`
@@ -26,7 +39,12 @@ type checkResponse struct {
 
 // POST /check: resolve the caller's limit, count the request, and answer
 // with the decision
-func Handler(m *policy.Manager) http.Handler {
+func Handler(m *policy.Manager, opts ...Option) http.Handler {
+	var o options
+	for _, fn := range opts {
+		fn(&o)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
@@ -37,13 +55,22 @@ func Handler(m *policy.Manager) http.Handler {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		if req.Identity == "" {
+
+		identity, tier := req.Identity, req.Tier
+		if o.auth != nil {
+			id, ok := o.auth.Lookup(r.Context(), r.Header.Get("X-API-Key"))
+			if !ok {
+				writeError(w, http.StatusUnauthorized, "invalid or missing api key")
+				return
+			}
+			identity, tier = id.Account, id.Tier
+		} else if identity == "" {
 			writeError(w, http.StatusBadRequest, "identity is required")
 			return
 		}
 
-		preq := policy.Request{Tier: req.Tier, Endpoint: req.Endpoint}
-		d := m.Allow(preq, req.Identity)
+		preq := policy.Request{Tier: tier, Endpoint: req.Endpoint}
+		d := m.Allow(preq, identity)
 
 		// Retry-After rounds up so clients never retry too early
 		var retryAfter int64

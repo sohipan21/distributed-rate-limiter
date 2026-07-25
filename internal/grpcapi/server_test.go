@@ -11,10 +11,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	ratelimitv1 "github.com/sohipan21/distributed-rate-limiter/gen/ratelimit/v1"
+	"github.com/sohipan21/distributed-rate-limiter/internal/auth"
 	"github.com/sohipan21/distributed-rate-limiter/internal/httpapi"
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
 	"github.com/sohipan21/distributed-rate-limiter/internal/policy"
@@ -129,6 +131,61 @@ func TestCheckMissingIdentity(t *testing.T) {
 	_, err := c.Check(context.Background(), &ratelimitv1.CheckRequest{Tier: "free"})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Errorf("error code = %v, want InvalidArgument", status.Code(err))
+	}
+}
+
+func authClient(t *testing.T) ratelimitv1.RateLimiterClient {
+	t.Helper()
+	a := auth.NewMemory(map[string]auth.Identity{
+		"k_paid": {Account: "bob", Tier: "paid"},
+	})
+	m := policy.NewManager(testPolicies(t))
+
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	ratelimitv1.RegisterRateLimiterServer(srv, NewServer(m, WithAuth(a)))
+	go srv.Serve(lis)
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("grpc.NewClient: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return ratelimitv1.NewRateLimiterClient(conn)
+}
+
+func TestAuthUnauthenticatedWithoutKey(t *testing.T) {
+	c := authClient(t)
+
+	_, err := c.Check(context.Background(), &ratelimitv1.CheckRequest{Identity: "self", Tier: "paid"})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("no key error = %v, want Unauthenticated", status.Code(err))
+	}
+
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-api-key", "bogus")
+	_, err = c.Check(ctx, &ratelimitv1.CheckRequest{})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Errorf("bad key error = %v, want Unauthenticated", status.Code(err))
+	}
+}
+
+func TestAuthTierFromKeyOverGrpc(t *testing.T) {
+	c := authClient(t)
+
+	// client claims free; the key says paid (limit 5)
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "x-api-key", "k_paid")
+	resp, err := c.Check(ctx, &ratelimitv1.CheckRequest{Identity: "ignored", Tier: "free", Endpoint: "/x"})
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if resp.GetLimit() != 5 {
+		t.Errorf("limit = %d, want 5 (the key's tier)", resp.GetLimit())
 	}
 }
 

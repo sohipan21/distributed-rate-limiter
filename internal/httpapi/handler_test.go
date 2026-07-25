@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sohipan21/distributed-rate-limiter/internal/auth"
 	"github.com/sohipan21/distributed-rate-limiter/internal/limiter"
 	"github.com/sohipan21/distributed-rate-limiter/internal/policy"
 )
@@ -174,6 +175,82 @@ func TestHealthz(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusOK || w.Body.String() != "ok" {
 		t.Errorf("healthz = %d %q, want 200 \"ok\"", w.Code, w.Body.String())
+	}
+}
+
+func authHandler(t *testing.T) http.Handler {
+	t.Helper()
+	p, err := policy.NewPolicies(
+		tb(10),
+		policy.Rule{Tier: "free", Limit: tb(2)},
+		policy.Rule{Tier: "paid", Limit: tb(5)},
+	)
+	if err != nil {
+		t.Fatalf("NewPolicies: %v", err)
+	}
+	a := auth.NewMemory(map[string]auth.Identity{
+		"k_free": {Account: "alice", Tier: "free"},
+		"k_paid": {Account: "bob", Tier: "paid"},
+	})
+	return Handler(policy.NewManager(p), WithAuth(a))
+}
+
+func checkWithKey(t *testing.T, h http.Handler, key, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/check", strings.NewReader(body))
+	if key != "" {
+		req.Header.Set("X-API-Key", key)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestAuthRejectsMissingAndUnknownKeys(t *testing.T) {
+	h := authHandler(t)
+
+	if w := checkWithKey(t, h, "", `{"endpoint":"/x"}`); w.Code != http.StatusUnauthorized {
+		t.Errorf("no key status = %d, want 401", w.Code)
+	}
+	if w := checkWithKey(t, h, "bogus", `{"endpoint":"/x"}`); w.Code != http.StatusUnauthorized {
+		t.Errorf("unknown key status = %d, want 401", w.Code)
+	}
+}
+
+func TestAuthTierComesFromKeyNotClient(t *testing.T) {
+	h := authHandler(t)
+
+	// the client claims paid; the key says free (limit 2). the claim must lose
+	body := `{"identity":"ignored","tier":"paid","endpoint":"/x"}`
+	w := checkWithKey(t, h, "k_free", body)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if got := hdr(w, "X-RateLimit-Limit"); got != "2" {
+		t.Errorf("X-RateLimit-Limit = %q, want \"2\" (the key's tier, not the client's claim)", got)
+	}
+
+	// a paid key gets the paid limit with no client claims at all
+	w = checkWithKey(t, h, "k_paid", `{"endpoint":"/x"}`)
+	if got := hdr(w, "X-RateLimit-Limit"); got != "5" {
+		t.Errorf("paid key X-RateLimit-Limit = %q, want \"5\"", got)
+	}
+}
+
+func TestAuthIdentityComesFromAccount(t *testing.T) {
+	h := authHandler(t)
+	body := `{"identity":"self-chosen","endpoint":"/x"}`
+
+	// exhaust alice's free quota (2); the client's identity field is ignored,
+	// so rotating it must not reset the counter
+	checkWithKey(t, h, "k_free", body)
+	checkWithKey(t, h, "k_free", `{"identity":"rotated","endpoint":"/x"}`)
+	if w := checkWithKey(t, h, "k_free", `{"identity":"rotated-again","endpoint":"/x"}`); w.Code != http.StatusTooManyRequests {
+		t.Errorf("third request status = %d, want 429 (identity rotation must not reset the count)", w.Code)
+	}
+	// bob's key still has its own quota
+	if w := checkWithKey(t, h, "k_paid", body); w.Code != http.StatusOK {
+		t.Errorf("paid key status = %d, want 200", w.Code)
 	}
 }
 

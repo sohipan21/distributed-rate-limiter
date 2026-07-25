@@ -114,12 +114,15 @@ func TestDefaultKeyFunc(t *testing.T) {
 	h := Middleware(c)(next)
 
 	req := httptest.NewRequest(http.MethodGet, "/upload", nil)
-	req.Header.Set("X-API-Key", "alice")
-	req.Header.Set("X-Tier", "free")
+	req.Header.Set("X-API-Key", "k_abc")
+	req.Header.Set("X-Tier", "paid") // must be ignored: tier is never client-chosen
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
-	if c.lastReq.Identity != "alice" || c.lastReq.Tier != "free" || c.lastReq.Endpoint != "/upload" {
-		t.Errorf("default key func produced %+v, want alice/free/upload", c.lastReq)
+	if c.lastReq.APIKey != "k_abc" || c.lastReq.Endpoint != "/upload" {
+		t.Errorf("default key func produced %+v, want APIKey k_abc endpoint /upload", c.lastReq)
+	}
+	if c.lastReq.Tier != "" {
+		t.Errorf("default key func forwarded client tier %q, want empty", c.lastReq.Tier)
 	}
 }
 

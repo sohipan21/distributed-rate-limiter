@@ -8,8 +8,11 @@ import (
 	"time"
 )
 
-// what identifies a request to the limiter
+// what identifies a request to the limiter. when the service runs with
+// auth on, set APIKey and the server derives identity and tier from it;
+// Identity/Tier are only trusted by servers running without auth
 type Request struct {
+	APIKey   string
 	Identity string
 	Tier     string
 	Endpoint string
