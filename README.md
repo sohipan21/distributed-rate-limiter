@@ -97,9 +97,6 @@ api_keys:
   k_paid_demo: {account: bob, tier: paid}
 ```
 
-Run without `-config` and the server uses built-in demo policies with auth
-off, which is handy locally but trusts whatever the client claims.
-
 ## Results
 
 k6 against the full cluster (three nodes behind nginx, one Redis) on a single
