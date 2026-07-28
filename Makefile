@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest proto demo
+.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest saturate proto demo
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -40,6 +40,9 @@ down:
 
 loadtest:
 	k6 run -e BASE_URL=$(BASE_URL) -e RATE=$(RATE) -e DURATION=$(DURATION) loadtest/check.js
+
+saturate:
+	./scripts/saturate.sh
 
 demo:
 	./demo/kill-redis.sh
