@@ -1,0 +1,11 @@
+date: 2026-07-28T17:03:01Z
+host: Darwin 25.1.0 arm64
+cpu: Apple M2 Pro
+physical cores: 10
+docker cpus: 10
+docker mem: 8321515520
+ulimit -n: 65535
+k6: k6 v2.1.0 (commit/devel, go1.26.4, darwin/arm64)
+redis: redis_version:7.4.9
+nodes: 3 behind nginx
+note: k6 runs on the same laptop as the stack — see README caveat

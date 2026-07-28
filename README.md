@@ -99,27 +99,51 @@ api_keys:
 
 ## Results
 
-k6 against the full cluster (three nodes behind nginx, one Redis) on a single
-laptop. Localhost numbers, so read them as a shape, not a promise.
+k6 against the full cluster (three nodes behind nginx, one Redis) on one M2
+Pro, with the generator on the same laptop. Each rate is three separate 20s runs
+at a fixed arrival rate, reported as medians; `make saturate` reproduces the
+sweep and [`loadtest/results/saturation/`](loadtest/results/saturation) holds
+the per-run output.
 
-| offered | achieved | p50 | p95 | p99 | allowed / denied |
-|---------|----------|------|------|------|------------------|
-| 300 rps | 300 rps | 1.31ms | 2.97ms | 4.82ms | 5075 / 12903 |
-| 1000 rps | 1000 rps | 0.69ms | 0.95ms | 1.39ms | 5223 / 54777 |
-| 2000 rps | 2000 rps | 0.58ms | 0.78ms | 1.34ms | 5253 / 114749 |
+| offered | achieved | p50 | p99 (median) | p99 range | errors |
+|--------:|---------:|----:|-------------:|----------:|-------:|
+| 1,000 | 999 | 0.66ms | 3.25ms | 1.75–3.76ms | 0% |
+| 2,000 | 1,996 | 0.58ms | 6.87ms | 1.79–10.74ms | 0% |
+| 5,000 | 4,991 | 0.75ms | 4.59ms | 4.28–29.81ms | 0% |
+| 8,000 | 7,992 | 1.15ms | 8.26ms | 8.08–10.96ms | 0% |
+| 10,000 | 9,957 | 2.01ms | 32.34ms | 32.0–43.66ms | 0% |
+| 12,000 | 11,889 | 4.99ms | 61.11ms | 56.65–70.46ms | 0% |
+| 14,000 | 13,835 | 11.45ms | 74.92ms | 63.01–78.37ms | 0% |
+| 16,000 | 12,579 | 88.11ms | 702.84ms | 450.67–738.64ms | 0% |
+| 18,000 | 3,521 | 235.54ms | 13,330ms | 9,238–16,427ms | 10.15% |
 
-Allowed stays flat while denied grows: past a point the extra load just
-becomes 429s. No errors at any level.
+![saturation curve](loadtest/results/saturation/saturation.png)
 
-![load ramp](docs/img/loadtest-ramp.png)
+It tracks the offered rate to **14,000 rps at p99 75ms**, then falls off a
+cliff: 16k delivers only 12.6k, and 18k collapses. p99 crosses 50ms at 12k, so
+depending on which you care about the useful ceiling is 12k (tail budget) or
+14k (throughput). Nothing errors until the cliff — past the knee requests queue
+and slow down rather than fail, which is what you want from something sitting
+in front of everything else. Allowed stays flat near 3,100 across the sweep
+because the limits never changed; the extra load all becomes 429s.
 
-A fourth run killed Redis mid-test. 44,991 requests, zero failures. Allowed
-jumps while the service fails open, then enforcement snaps back when Redis
-returns.
+Every rate is measured three times and the table reports medians, because a
+single run near the knee swings by 3x.
 
-![redis killed mid-test](docs/img/loadtest-kill-redis.png)
+**What limits it is the proxy, not the limiter.** One node hit directly
+sustains ~15k rps at p99 32ms, while three nodes behind nginx sustain ~13.8k —
+the proxy subtracts capacity rather than adding it, and it is the largest CPU
+consumer at saturation. Redis is nowhere near its limit: script execution holds
+at ~22µs per call, about a third of one core at 14k rps. Full working, plus
+what proxy tuning alone was worth (2x throughput, 44x better p99), is in
+[loadtest/results/saturation/attribution](loadtest/results/saturation/attribution/README.md).
 
-`make loadtest` reproduces these.
+Two caveats, both real. k6, three nodes, nginx and Redis share ten cores on one
+laptop, so these are shapes rather than capacity promises. And the load
+generator's own footprint moves the answer: at a fixed 12k offered, varying
+only k6's preallocated VUs moved p99 between 50ms and 285ms. The defaults in
+`loadtest/check.js` were picked from that measurement, and it is the main
+reason to want a second machine before quoting any of these as a number.
 
 ## Use it in your own app
 

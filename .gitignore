@@ -16,6 +16,9 @@ go.work
 go.work.sum
 vendor/
 
+# Python (scripts/)
+__pycache__/
+
 # Env & secrets
 .env
 *.local

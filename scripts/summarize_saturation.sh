@@ -1,83 +1,68 @@
 #!/usr/bin/env bash
-# Turn the per-step JSON from saturate.sh into the markdown curve that goes in
-# the README. Every rate is measured several times; this reports the median of
-# each metric, plus the p99 spread, because near the knee a single run swings
-# by 3x and one number would be a coin flip.
+# Turn runs.csv into the markdown curve that goes in the README. Every rate is
+# measured several times; this reports the median of each metric plus the p99
+# spread, because near the knee a single run swings by 3x.
 #
 # Two knees, because they're different failures and they don't arrive together:
-#   latency knee    — first rate whose median p99 crosses 50ms. still keeping
-#                     up on throughput, but the tail has gone.
+#   latency knee    — first rate whose median p99 crosses P99_BUDGET_MS. still
+#                     keeping up on throughput, but the tail has gone.
 #   throughput knee — first rate delivering under 95% of offered. the ceiling.
+#
+# Rates where any run exhausted k6's VU pool are excluded from both: those rows
+# measure the generator, not the service.
 #
 #   ./scripts/summarize_saturation.sh [results-dir]
 set -euo pipefail
 
 DIR=${1:-loadtest/results/saturation}
-[ -d "$DIR" ] || { echo "no such directory: $DIR"; exit 1; }
+CSV="$DIR/runs.csv"
+[ -f "$CSV" ] || { echo "no runs.csv in $DIR"; exit 1; }
 
 P99_BUDGET_MS=${P99_BUDGET_MS:-50}
 
-jq -rs --argjson budget "$P99_BUDGET_MS" '
-  def median(f):
-    (map(f) | sort) as $s
-    | ($s | length) as $n
-    | if $n == 0 then 0
-      elif $n % 2 == 1 then $s[($n - 1) / 2]
-      else ($s[$n / 2 - 1] + $s[$n / 2]) / 2
-      end;
-  def r2: . * 100 | round / 100;
+awk -F, -v budget="$P99_BUDGET_MS" '
+function median(arr, n,   i, j, t) {
+  for (i = 2; i <= n; i++) { t = arr[i]; for (j = i-1; j >= 1 && arr[j] > t; j--) arr[j+1] = arr[j]; arr[j+1] = t }
+  return (n % 2) ? arr[int((n+1)/2)] : (arr[n/2] + arr[n/2+1]) / 2
+}
+function r2(x) { return int(x * 100 + 0.5) / 100 }
 
-  group_by(.offered_rps)
-  | map({
-      offered_rps: .[0].offered_rps,
-      reps: length,
-      achieved_rps: median(.achieved_rps),
-      p50_ms: median(.p50_ms),
-      p99_ms: median(.p99_ms),
-      p99_min: (map(.p99_ms) | min),
-      p99_max: (map(.p99_ms) | max),
-      max_ms: median(.max_ms),
-      error_rate: median(.error_rate),
-      dropped: median(.dropped_iterations),
-      allowed: median(.allowed),
-      denied: median(.denied),
-      # generator-bound only when k6 exhausted its VU pool. dropped iterations
-      # alone do not mean that: with VUs still free, drops are the service
-      # replying slowly, which is a result rather than an artifact
-      generator_bound: ((
-        map(select((.max_vus_configured // 0) > 0
-                   and .vus_max >= (.max_vus_configured * 0.99)))
-        | length
-      ) > 0),
-    })
-  | sort_by(.offered_rps)
-  | (map(select(.generator_bound | not))) as $valid
-  | ($valid | map(select(.p99_ms > $budget)) | first) as $lat
-  | ($valid | map(select(.achieved_rps < (.offered_rps * 0.95))) | first) as $thr
-  | "| offered | achieved | p50 | p99 (median) | p99 range | errors | allowed/denied |",
-    "|--------:|---------:|----:|-------------:|----------:|-------:|----------------|",
-    (.[] |
-      "| \(.offered_rps) | \(.achieved_rps|floor)"
-      + " | \(.p50_ms|r2)ms | \(.p99_ms|r2)ms"
-      + " | \(.p99_min|r2)–\(.p99_max|r2)ms"
-      + " | \(.error_rate*10000|round/100)%"
-      + " | \(.allowed|floor)/\(.denied|floor) |"
-      + (if .generator_bound then "  <-- generator hit its VU cap; not a service measurement" else "" end)
-    ),
-    "",
-    (if .[0].reps == 1
-     then "Single run per rate — near the knee that is a coin flip; raise REPS."
-     else "Medians of \(.[0].reps) runs per rate." end),
-    (if $lat == null
-     then "No latency knee: median p99 stayed under \($budget)ms at every rate."
-     else "Latency knee: \($lat.offered_rps) offered — median p99 \($lat.p99_ms|r2)ms"
-          + " (range \($lat.p99_min|r2)–\($lat.p99_max|r2)ms),"
-          + " still delivering \($lat.achieved_rps|floor) of \($lat.offered_rps)."
-     end),
-    (if $thr == null
-     then "No throughput knee: every rate delivered >=95% of offered. Raise RATES."
-     else "Throughput knee: \($thr.offered_rps) offered — delivered \($thr.achieved_rps|floor)"
-          + " (\((($thr.achieved_rps / $thr.offered_rps) * 1000 | round) / 10)% of offered),"
-          + " median p99 \($thr.p99_ms|r2)ms, errors \($thr.error_rate*10000|round/100)%."
-     end)
-' "$DIR"/step-*.json
+NR == 1 { for (i = 1; i <= NF; i++) col[$i] = i; next }
+{
+  rate = $col["offered_rps"]
+  if (!(rate in seen)) { rates[++nr] = rate; seen[rate] = 1 }
+  n = ++cnt[rate]
+  ach[rate, n] = $col["achieved_rps"]; p50[rate, n] = $col["p50_ms"]
+  p99[rate, n] = $col["p99_ms"];       err[rate, n] = $col["error_rate"]
+  alw[rate, n] = $col["allowed"];      den[rate, n] = $col["denied"]
+  # a rate is generator-bound if ANY of its runs hit the VU ceiling
+  if ($col["max_vus_configured"] > 0 && $col["vus_max"] >= $col["max_vus_configured"] * 0.99) gen[rate] = 1
+}
+END {
+  n = asort_rates(rates, nr)
+  print "| offered | achieved | p50 | p99 (median) | p99 range | errors | allowed/denied |"
+  print "|--------:|---------:|----:|-------------:|----------:|-------:|----------------|"
+  for (i = 1; i <= nr; i++) {
+    rate = rates[i]; c = cnt[rate]
+    for (k = 1; k <= c; k++) { a[k] = ach[rate, k]; b[k] = p50[rate, k]; d[k] = p99[rate, k]; e[k] = err[rate, k]; f[k] = alw[rate, k]; g[k] = den[rate, k] }
+    ma = median(a, c); mb = median(b, c); md = median(d, c); me = median(e, c); mf = median(f, c); mg = median(g, c)
+    lo = hi = p99[rate, 1]
+    for (k = 1; k <= c; k++) { if (p99[rate, k] < lo) lo = p99[rate, k]; if (p99[rate, k] > hi) hi = p99[rate, k] }
+    printf "| %d | %d | %sms | %sms | %s–%sms | %s%% | %d/%d |%s\n", rate, int(ma), r2(mb), r2(md), r2(lo), r2(hi), r2(me * 100), int(mf), int(mg), (rate in gen) ? "  <-- generator hit its VU cap; not a service measurement" : ""
+    if (!(rate in gen)) {
+      if (!latk && md > budget) { latk = rate; latv = md; latlo = lo; lathi = hi; lata = ma }
+      if (!thrk && ma < rate * 0.95) { thrk = rate; thra = ma; thrv = md; thre = me }
+    }
+    reps = c
+  }
+  printf "\n%s\n", (reps == 1) ? "Single run per rate — near the knee that is a coin flip; raise REPS." : sprintf("Medians of %d runs per rate.", reps)
+  if (latk) printf "Latency knee: %d offered — median p99 %sms (range %s–%sms), still delivering %d of %d.\n", latk, r2(latv), r2(latlo), r2(lathi), int(lata), latk
+  else      printf "No latency knee: median p99 stayed under %dms at every rate.\n", budget
+  if (thrk) printf "Throughput knee: %d offered — delivered %d (%s%% of offered), median p99 %sms, errors %s%%.\n", thrk, int(thra), r2(thra / thrk * 100), r2(thrv), r2(thre * 100)
+  else      print  "No throughput knee: every rate delivered >=95% of offered. Raise RATES."
+}
+function asort_rates(arr, n,   i, j, t) {
+  for (i = 2; i <= n; i++) { t = arr[i]; for (j = i-1; j >= 1 && arr[j]+0 > t+0; j--) arr[j+1] = arr[j]; arr[j+1] = t }
+  return n
+}
+' "$CSV"

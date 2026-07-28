@@ -48,25 +48,33 @@ docker compose up -d --build --wait
   echo "note: k6 runs on the same laptop as the stack — see README caveat"
 } > "$OUTDIR/specs.txt"
 
+# highest CPU any container matching $1 reached during the run
+peak_cpu() {
+  awk -v pat="$1" '$1 ~ pat { gsub(/%/, "", $2); if ($2+0 > max) max = $2+0 }
+                   END { printf "%.1f", max+0 }' "$2" 2>/dev/null
+}
+
+# One row per run. Every number the README, curve.md and the attribution
+# writeup quote is a column here — there is deliberately no per-run dump.
+CSV="$OUTDIR/runs.csv"
+echo "offered_rps,rep,achieved_rps,p50_ms,p99_ms,p999_ms,max_ms,error_rate,requests,dropped_iterations,vus_max,max_vus_configured,allowed,denied,evalsha_calls,evalsha_usec_per_call,nginx_cpu_pct,redis_cpu_pct,node_cpu_pct_max" > "$CSV"
+
 echo "== sweeping: $RATES ($REPS reps each, ${DURATION} per rep) =="
 for rate in $RATES; do
   echo
   echo "-- offered ${rate} rps --"
 
   for rep in $(seq 1 "$REPS"); do
-    tag="${rate}-rep${rep}"
+    tmp=$(mktemp -d)
 
     docker compose exec -T redis redis-cli FLUSHALL >/dev/null
     docker compose exec -T redis redis-cli CONFIG RESETSTAT >/dev/null
 
-    # sample container CPU through the run; the samples are what tell us which
-    # tier saturated
-    stats_file="$OUTDIR/stats-${tag}.txt"
-    : > "$stats_file"
+    # sample container CPU through the run; the peak per tier is what says
+    # which one saturated
     (
       while true; do
-        echo "--- $(date +%H:%M:%S)" >> "$stats_file"
-        docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' >> "$stats_file" 2>/dev/null || true
+        docker stats --no-stream --format '{{.Name}} {{.CPUPerc}}' >> "$tmp/stats" 2>/dev/null || true
         sleep 5
       done
     ) &
@@ -78,36 +86,42 @@ for rate in $RATES; do
       -e RATE="$rate" \
       -e DURATION="$DURATION" \
       -e KEYS="$KEYS" \
-      -e OUT_JSON="$OUTDIR/step-${tag}.json" \
-      loadtest/check.js > "$OUTDIR/.k6-raw.txt" 2>&1
+      -e OUT_JSON="$tmp/step.json" \
+      loadtest/check.js > "$tmp/k6.log" 2>&1
     k6_exit=$?
     set -e
-
-    # every metric lands in step-<tag>.json via handleSummary, so k6's stdout is
-    # just the progress stream — megabytes of it on a failing step. Keep only a
-    # tally of distinct errors, and only when there were any.
-    if grep -qE '^(ERRO|WARN)' "$OUTDIR/.k6-raw.txt" 2>/dev/null; then
-      {
-        echo "distinct errors/warnings from k6 (count, message):"
-        grep -hE '^(ERRO|WARN)' "$OUTDIR/.k6-raw.txt" \
-          | sed 's/time="[^"]*" //' | sort | uniq -c | sort -rn | head -20
-      } > "$OUTDIR/k6-errors-${tag}.txt"
-    fi
-    rm -f "$OUTDIR/.k6-raw.txt"
 
     kill "$stats_pid" 2>/dev/null || true
     wait "$stats_pid" 2>/dev/null || true
 
-    # per-rep redis server-side timing (usec_per_call for evalsha == lua exec)
-    docker compose exec -T redis redis-cli INFO commandstats > "$OUTDIR/redis-commandstats-${tag}.txt" 2>/dev/null || true
-    docker compose exec -T redis redis-cli INFO clients >> "$OUTDIR/redis-commandstats-${tag}.txt" 2>/dev/null || true
+    # redis server-side timing: usec_per_call for evalsha is the lua execution
+    docker compose exec -T redis redis-cli INFO commandstats > "$tmp/cs" 2>/dev/null || true
 
-    if [ -f "$OUTDIR/step-${tag}.json" ]; then
+    if [ -f "$tmp/step.json" ]; then
+      metrics=$(jq -r '[
+        (.achieved_rps*10|round/10),
+        (.p50_ms*100|round/100), (.p99_ms*100|round/100),
+        (.p999_ms*100|round/100), (.max_ms*100|round/100),
+        (.error_rate*100000|round/100000),
+        .requests, .dropped_iterations, .vus_max, .max_vus_configured,
+        .allowed, .denied
+      ] | map(tostring) | join(",")' "$tmp/step.json")
+
+      ev=$(awk -F'[:,=]' '/^cmdstat_evalsha:/ {print $3","$7; exit}' "$tmp/cs" 2>/dev/null)
+      : "${ev:=,}"
+
+      echo "${rate},${rep},${metrics},${ev},$(peak_cpu nginx "$tmp/stats"),$(peak_cpu redis "$tmp/stats"),$(peak_cpu node "$tmp/stats")" >> "$CSV"
+
       jq -r '"  rep '"$rep"': achieved \(.achieved_rps|floor) rps | p50 \(.p50_ms*100|round/100)ms | p99 \(.p99_ms*100|round/100)ms | errors \(.error_rate*10000|round/100)% | dropped \(.dropped_iterations|floor) | vus \(.vus_max)"' \
-        "$OUTDIR/step-${tag}.json"
+        "$tmp/step.json"
     fi
+
     # k6 exits 99 when a threshold is breached; that is a data point, not a failure
     [ "$k6_exit" -eq 0 ] || echo "    (k6 exit $k6_exit — threshold breached, expected past the knee)"
+
+    # the per-run dumps are scratch: everything cited downstream is now a column
+    # in runs.csv, and 80-odd raw INFO dumps in the repo help nobody
+    rm -rf "$tmp"
   done
 done
 
