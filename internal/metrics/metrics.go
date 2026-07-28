@@ -13,9 +13,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// sub-ms buckets: day-9 baselines put decisions at ~0.4ms in memory and
-// ~1-4ms against redis
-var buckets = []float64{0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1}
+// sub-ms buckets because decisions land at ~0.4ms in memory and ~1-4ms against
+// redis, plus a tail out to 2.5s: near saturation p99 climbs past 100ms, and
+// anything above the last bucket collapses into +Inf where quantiles can't be
+// estimated at all
+var buckets = []float64{
+	0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1,
+	0.25, 0.5, 1.0, 2.5,
+}
 
 type Metrics struct {
 	reg *prometheus.Registry

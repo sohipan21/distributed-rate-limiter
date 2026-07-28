@@ -70,6 +70,7 @@ func main() {
 	redisAddr := flag.String("redis", "", "redis address; empty runs in-memory limiters")
 	degrade := flag.String("degrade", "open", "redis-down behavior: open (allow) or closed (deny)")
 	configPath := flag.String("config", "", "yaml config file; empty uses built-in demo policies")
+	redisPool := flag.Int("redis-pool", 0, "redis connection pool size; 0 uses the client default (10 per CPU)")
 	flag.Parse()
 
 	policies := demoPolicies()
@@ -117,6 +118,10 @@ func main() {
 			ReadTimeout:  300 * time.Millisecond,
 			WriteTimeout: 300 * time.Millisecond,
 			MaxRetries:   -1,
+			// 0 leaves the go-redis default (10 per CPU). worth raising under
+			// load: once every connection is busy, callers queue for one and
+			// that wait lands in the decision latency, not in the redis timing
+			PoolSize: *redisPool,
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
