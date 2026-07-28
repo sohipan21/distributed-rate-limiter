@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up down loadtest proto demo
+.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest proto demo
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -30,8 +30,13 @@ tidy:
 up:
 	docker compose up -d --wait
 
+# with prometheus + grafana; left out of `up` so they don't compete with the
+# service for CPU during a load run
+up-obs:
+	docker compose --profile observability up -d --wait
+
 down:
-	docker compose down
+	docker compose --profile observability down
 
 loadtest:
 	k6 run -e BASE_URL=$(BASE_URL) -e RATE=$(RATE) -e DURATION=$(DURATION) loadtest/check.js

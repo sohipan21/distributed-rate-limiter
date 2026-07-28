@@ -36,8 +36,12 @@ services:
       - "8083:8080"
       - "9093:9090"
 
+  # prometheus and grafana sit behind a profile so they don't compete with the
+  # service for CPU during a load run. `make up` leaves them out;
+  # `make up-obs` (--profile observability) brings them in.
   prometheus:
     image: prom/prometheus
+    profiles: ["observability"]
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
@@ -52,6 +56,7 @@ services:
 
   grafana:
     image: grafana/grafana
+    profiles: ["observability"]
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
