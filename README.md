@@ -145,6 +145,26 @@ only k6's preallocated VUs moved p99 between 50ms and 285ms. The defaults in
 `loadtest/check.js` were picked from that measurement, and it is the main
 reason to want a second machine before quoting any of these as a number.
 
+### Where the time goes
+
+Splitting a `/check` at light load and at the knee (`make breakdown`):
+
+| layer | 2,000 rps | 12,000 rps | growth |
+|---|--------:|---------:|-------:|
+| lua inside redis | 0.021ms | 0.025ms | 1.2x |
+| redis round trip + pool wait | 0.131ms | 4.211ms | 32x |
+| handler + policy | 0.001ms | 0.002ms | 2x |
+| nginx + go http + wire | 0.689ms | 6.357ms | 9x |
+| end to end | 0.842ms | 10.595ms | 13x |
+
+The rate limiting is not the expensive part. Deciding a request — refill,
+compare, write back, set the TTL, all in one script — costs ~25µs and barely
+moves under load; the Go handler adds ~2µs. At 12k rps the client-side Redis
+call takes 4.2ms waiting on a script that runs in 0.025ms, so 99.4% of it is
+round trip and pool wait. What grows under load is queueing, not computation,
+which is why the fix is fewer round trips and more proxy rather than faster Lua.
+Working and caveats in [docs/05-latency.md](docs/05-latency.md).
+
 ## Use it in your own app
 
 ```go
