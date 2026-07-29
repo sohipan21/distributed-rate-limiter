@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest saturate proto demo
+.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest saturate breakdown proto demo
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -43,6 +43,11 @@ loadtest:
 
 saturate:
 	./scripts/saturate.sh
+
+# where a request's time actually goes, at light load and at the knee
+breakdown:
+	./scripts/latency_breakdown.sh 2000 20s
+	./scripts/latency_breakdown.sh 12000 20s
 
 demo:
 	./demo/kill-redis.sh

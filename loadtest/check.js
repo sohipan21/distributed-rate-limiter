@@ -119,6 +119,10 @@ export function handleSummary(data) {
       requests: pick('http_reqs', 'count'),
       error_rate: pick('http_req_failed', 'rate'),
       dropped_iterations: pick('dropped_iterations', 'count'),
+      // avg is what the latency breakdown checks against: the per-layer figures
+      // it derives are means (histogram sum/count), so comparing them to a
+      // median would not add up even when the decomposition is right
+      avg_ms: pick('http_req_duration', 'avg'),
       p50_ms: pick('http_req_duration', 'med'),
       p90_ms: pick('http_req_duration', 'p(90)'),
       p95_ms: pick('http_req_duration', 'p(95)'),
