@@ -1,7 +1,7 @@
 # Redis failover, and what it costs
 
 The service nodes are stateless, so losing one costs nothing. Redis holds every
-counter, so losing *it* used to take the whole thing down — the availability
+counter, so losing *it* used to take the whole thing down. The availability
 story stopped at the tier that didn't have the state.
 
 `docker-compose.ha.yml` puts a replica and three sentinels behind the master.
@@ -25,7 +25,7 @@ directly: spend a bucket completely, kill the master, and count how many
 requests get through that should have been denied.
 
 The config for it (`demo/config.failover.yaml`) uses a limit of 100 per **hour**
-so the bucket refills at 0.028 tokens/sec — a 20-second failover returns about
+so the bucket refills at 0.028 tokens/sec, meaning a 20-second failover returns
 half a token. Anything above that is state the failover actually lost, not
 normal refill.
 
@@ -41,35 +41,33 @@ ones acknowledged in the last few milliseconds.
 | promotion time | ~5s (`down-after-milliseconds 1000`, quorum 2 of 3) |
 | requests served during the outage | all of them, none failed |
 | allowed during the outage window | 4 of 200 |
-| **allowed after promotion, bucket already spent** | **0** |
+| allowed after promotion, bucket already spent | 0 |
 
-Two different numbers, and it matters which is which.
+Those two numbers mean different things.
 
-**The 4 are the fail-open policy working as designed.** With `-degrade open`,
-an unreachable Redis means requests pass — availability chosen over the
-guarantee, which is the right default for a limiter sitting in front of
-everything else. Running with `-degrade closed` takes that to zero and denies
-real traffic instead. That trade is covered in
-[04-tradeoffs.md](04-tradeoffs.md).
+The 4 are the fail-open policy. With `-degrade open` an unreachable Redis means
+requests pass, which is the default I'd want for something sitting in front of
+everything else. `-degrade closed` takes it to zero and denies real traffic
+instead; that trade is in [04-tradeoffs.md](04-tradeoffs.md).
 
-**The 0 is the interesting one.** It says the replica had every write that spent
-the bucket, so the promotion cost no correctness. That is the good case, not a
-guarantee: master and replica are containers on one host here, so replication
-lag is microseconds. Across availability zones, under a heavier write rate, or
-with a slow replica, writes acknowledged by the master but not yet shipped would
-be lost and the promoted replica would start from a staler count — over-admitting
-by roughly (write rate × replication lag).
+The 0 says the replica had every write that spent the bucket, so the promotion
+cost no correctness. Don't read it as a guarantee. Master and replica are
+containers on one host, so replication lag is microseconds. Across availability
+zones, under a heavier write rate, or with a slow replica, writes the master
+acknowledged but hadn't shipped yet would be lost, and the promoted replica
+would start from a staler count, over-admitting by roughly
+(write rate x replication lag).
 
 ## What would make it a guarantee
 
 Nothing here waits for replica acknowledgement. `WAIT 1 <ms>` after each write
 would turn "probably replicated" into "replicated or the write reports failure",
-at the cost of a second round trip on the hot path — which
-[05-latency.md](05-latency.md) shows is already the dominant term, so it would
-roughly double decision latency. For rate limiting that is a bad trade: briefly
-over-admitting a handful of requests during a rare failover is cheaper than
-paying a synchronous replication round trip on every request forever.
+at the cost of another round trip on the hot path. [05-latency.md](05-latency.md)
+shows that's already the dominant term, so it would roughly double decision
+latency. Bad trade here: over-admitting a handful of requests during a rare
+failover is cheaper than a synchronous replication round trip on every request
+forever.
 
-The honest summary: this setup removes Redis as a single point of failure and
-costs a few seconds of fail-open plus a bounded, measurable amount of
-over-admission. It does not make the counter durable, and it isn't trying to.
+So: this removes Redis as a single point of failure, and costs a few seconds of
+fail-open plus a bounded amount of over-admission. It does not make the counter
+durable, and isn't trying to.

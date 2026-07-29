@@ -1,4 +1,4 @@
-# What actually limits throughput
+# What limits throughput
 
 The sweep in `../curve.md` tracks the offered rate to 14k and falls apart by
 16k. Four experiments to find out what stopped it. Same machine, same Redis,
@@ -14,7 +14,7 @@ few and a 20s run spends itself ramping and drops iterations; too many and a
 thousand idle JS runtimes take CPU the service needed. Measured at a fixed
 12,000 offered, varying only `preAllocatedVUs`:
 
-| preallocated VUs | achieved | p50 | p99 | VUs actually used |
+| preallocated VUs | achieved | p50 | p99 | VUs used |
 |-----------------:|---------:|----:|----:|------------------:|
 | 100 | 11,805 | 4.29ms | 66.82ms | 384 |
 | 400 | 11,913 | 4.53ms | 50.09ms | 263 |
@@ -27,11 +27,11 @@ defaults to `rate/30` preallocated with a generous `maxVUs`, since maxVUs is
 grown into on demand and costs nothing until used.
 
 Rows where a run exhausted the VU pool are flagged in `../curve.md` and
-excluded from the knee calculation — they measure k6, not the service.
+excluded from the knee calculation; they measure k6, not the service.
 
 ## 2. Is it Redis?
 
-`INFO commandstats`, reset before every run — the `evalsha_usec_per_call`
+`INFO commandstats`, reset before every run. The `evalsha_usec_per_call`
 column in [`../runs.csv`](../runs.csv):
 
 | offered | evalsha calls | usec_per_call |
@@ -44,11 +44,10 @@ column in [`../runs.csv`](../runs.csv):
 Medians of the three runs at each rate, same as everywhere else here.
 
 Script execution is flat at ~25µs from 8k all the way through the cliff. At 14k
-rps that is ~0.33s of script execution per second of wall clock — a third of one
-core. Redis sat at 62% CPU while the sweep was falling over. It is not the
-constraint.
+rps that is ~0.33s of script execution per second of wall clock, a third of one
+core. Redis sat at 62% CPU while the sweep was falling over. Not the constraint.
 
-## 3. Is it nginx? — yes
+## 3. Is it nginx? Yes
 
 One node hit directly on :8081, versus three nodes behind nginx on :8080:
 
@@ -60,9 +59,9 @@ One node hit directly on :8081, versus three nodes behind nginx on :8080:
 
 A single node sustains ~15k. Three nodes behind the proxy sustain ~13.8k and are
 roughly 9x worse at p99 for the same offered rate. The proxy is not adding
-capacity, it is subtracting it — and it is the largest CPU consumer at
-saturation (160% vs ~79% per node and 63% for Redis — the `*_cpu_pct`
-columns in [`../runs.csv`](../runs.csv)).
+capacity, it is subtracting it, and it's the largest CPU consumer at saturation
+(160% vs ~79% per node and 63% for Redis; see the `*_cpu_pct` columns in
+[`../runs.csv`](../runs.csv)).
 
 ## 4. How much of that was proxy config
 
@@ -84,11 +83,11 @@ entirely to nginx.
 The rate limiter is not the bottleneck at any rate measured. One node serves
 ~15k rps against Redis at p99 32ms; Redis has roughly 3x headroom on script
 execution. The clustered ceiling of ~13.8k is imposed by the single co-located
-nginx, and the collapse past 16k is the whole box — service plus generator —
+nginx, and the collapse past 16k is the whole box, service plus generator,
 running out of cores.
 
 The fix is more proxy, not more limiter: several nginx instances, a proxy that
 scales better across cores, or clients sharding across nodes directly.
-Untested here because the box has no spare cores to test it with. A second
-machine for the generator is the honest next step, and would also remove the
+Untested here because the box has no spare cores to test it with. Running the
+generator on a second machine is the next step, and would also remove the
 measurement sensitivity in experiment 1.

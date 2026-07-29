@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest saturate breakdown proto demo ha-up ha-down failover failover-test
+.PHONY: all fmt vet test cover bench build run tidy up up-obs down loadtest saturate breakdown proto demo ha-up ha-down failover failover-test
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -14,6 +14,13 @@ vet:
 
 test:
 	go test -race ./...
+
+# same filtering as the CI gate: generated protobuf is excluded
+cover:
+	go test -covermode=atomic -coverprofile=coverage.out ./...
+	@grep -v '/gen/' coverage.out > coverage.filtered.out
+	@go tool cover -func=coverage.filtered.out | tail -1
+	@echo "html report: go tool cover -html=coverage.filtered.out"
 
 bench:
 	go test -bench=. -benchmem -run='^$$' ./internal/limiter/

@@ -16,15 +16,15 @@ RATE=5000 DURATION=60s make loadtest     # or crank it
 ## Finding the ceiling
 
 `make saturate` steps through a range of offered rates (3 runs each, reported
-as medians) and reports the knee — the rate where p99 breaks or throughput
+as medians) and reports the knee: the rate where p99 breaks or throughput
 stops keeping up. Results and machine specs land in
 [`results/saturation/`](results/saturation), including the bottleneck
 attribution in [`results/saturation/attribution`](results/saturation/attribution)
 that separates the generator, Redis, and the proxy as candidate causes.
 Numbers and the full writeup are in the main [README](../README.md#results).
 
-`make breakdown` splits a single request into where its latency actually goes
-(Lua, Redis round trip, handler, proxy) at light load and at the knee — see
+`make breakdown` splits a single request into where its latency goes (Lua,
+Redis round trip, handler, proxy) at light load and at the knee. Writeup in
 [docs/05-latency.md](../docs/05-latency.md).
 
 ## Baseline (single node, memory vs redis)

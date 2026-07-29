@@ -1,6 +1,7 @@
 # Distributed Rate Limiter
 
 [![tests](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/test.yml/badge.svg)](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/test.yml)
+[![coverage](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/coverage.yml/badge.svg)](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/coverage.yml)
 
 Rate limiting as a service. Multiple stateless Go nodes share one Redis, so a
 limit like "100 requests per minute" holds no matter which node answers. It
@@ -56,14 +57,14 @@ node3 ─┘   (quorum 2)          │                        │
                                └────── promoted on ─────┘
 ```
 
-`make failover` kills the master with writes in flight and measures the cost.
-Measured: promotion in ~5s, no failed requests, 4 of 200 allowed during the
-outage window (the fail-open policy, by design), and **zero over-admission
-after the promotion** — the replica had every write that spent the bucket.
-That last number is the good case rather than a guarantee, since replication is
-asynchronous and these containers share a host; what it would cost across
-availability zones, and why paying `WAIT` on the hot path is the wrong trade
-here, is in [docs/06-failover.md](docs/06-failover.md).
+`make failover` kills the master with writes in flight and measures what that
+costs. Promotion took ~5s, no request failed, 4 of 200 were allowed during the
+outage window (the fail-open policy), and nothing got through after the
+promotion that shouldn't have: the replica had every write that spent the
+bucket. That last figure is the easy case, not a guarantee: replication is
+asynchronous and these containers share a host.
+[docs/06-failover.md](docs/06-failover.md) covers what it would cost across
+availability zones, and why paying `WAIT` on the hot path is the wrong trade.
 
 ## Try it
 
@@ -140,31 +141,30 @@ the per-run output.
 
 ![saturation curve](loadtest/results/saturation/saturation.png)
 
-It tracks the offered rate to **14,000 rps at p99 75ms**, then falls off a
-cliff: 16k delivers only 12.6k, and 18k collapses. p99 crosses 50ms at 12k, so
-depending on which you care about the useful ceiling is 12k (tail budget) or
-14k (throughput). Nothing errors until the cliff — past the knee requests queue
-and slow down rather than fail, which is what you want from something sitting
-in front of everything else. Allowed stays flat near 3,100 across the sweep
-because the limits never changed; the extra load all becomes 429s.
+It tracks the offered rate to 14,000 rps at p99 75ms, then falls off a cliff:
+16k delivers only 12.6k and 18k collapses. p99 crosses 50ms at 12k, so the
+useful ceiling is 12k on a tail budget or 14k on throughput. Nothing errors
+until the cliff; past the knee requests queue and slow down instead of failing.
+Allowed stays flat near 3,100 across the sweep because the limits never changed;
+the extra load all becomes 429s.
 
-Every rate is measured three times and the table reports medians, because a
-single run near the knee swings by 3x.
+Each rate is measured three times and the table reports medians. A single run
+near the knee swings by 3x.
 
-**What limits it is the proxy, not the limiter.** One node hit directly
-sustains ~15k rps at p99 32ms, while three nodes behind nginx sustain ~13.8k —
-the proxy subtracts capacity rather than adding it, and it is the largest CPU
-consumer at saturation. Redis is nowhere near its limit: script execution holds
-at ~22µs per call, about a third of one core at 14k rps. Full working, plus
-what proxy tuning alone was worth (2x throughput, 44x better p99), is in
-[loadtest/results/saturation/attribution](loadtest/results/saturation/attribution/README.md).
+The proxy is what limits this, not the limiter. One node hit directly sustains
+~15k rps at p99 32ms while three nodes behind nginx sustain ~13.8k, so the proxy
+is subtracting capacity, and it's the largest CPU consumer at saturation. Redis
+isn't close to its limit: script execution holds at ~22µs per call, about a
+third of one core at 14k rps. Working in
+[loadtest/results/saturation/attribution](loadtest/results/saturation/attribution/README.md),
+including what proxy config alone was worth (2x throughput, 44x better p99).
 
-Two caveats, both real. k6, three nodes, nginx and Redis share ten cores on one
-laptop, so these are shapes rather than capacity promises. And the load
-generator's own footprint moves the answer: at a fixed 12k offered, varying
-only k6's preallocated VUs moved p99 between 50ms and 285ms. The defaults in
-`loadtest/check.js` were picked from that measurement, and it is the main
-reason to want a second machine before quoting any of these as a number.
+Two caveats. k6, three nodes, nginx and Redis share ten cores on one laptop, so
+read these as shapes and not capacity numbers. And the generator's own footprint
+moves the answer: at a fixed 12k offered, changing only k6's preallocated VUs
+moved p99 between 50ms and 285ms. The defaults in `loadtest/check.js` came out of
+that measurement, and it's the main reason I'd want a second machine before
+quoting any of this.
 
 ### Where the time goes
 
@@ -178,8 +178,8 @@ Splitting a `/check` at light load and at the knee (`make breakdown`):
 | nginx + go http + wire | 0.689ms | 6.357ms | 9x |
 | end to end | 0.842ms | 10.595ms | 13x |
 
-The rate limiting is not the expensive part. Deciding a request — refill,
-compare, write back, set the TTL, all in one script — costs ~25µs and barely
+The rate limiting is not the expensive part. Deciding a request (refill,
+compare, write back, set the TTL, all in one script) costs ~25µs and barely
 moves under load; the Go handler adds ~2µs. At 12k rps the client-side Redis
 call takes 4.2ms waiting on a script that runs in 0.025ms, so 99.4% of it is
 round trip and pool wait. What grows under load is queueing, not computation,
@@ -219,8 +219,18 @@ internal/grpcapi  grpc server        internal/httpapi  http handlers
 internal/metrics  prometheus metrics
 pkg/sdk           the drop-in client and middleware
 grafana/          dashboard as code   loadtest/  k6 scripts and results
-demo/             the kill-redis demo
+demo/             the kill-redis and failover demos
+scripts/          saturation sweep, latency breakdown, plotting
+docs/             tradeoffs, latency breakdown, failover writeups
 ```
 
 Redis-backed tests skip themselves when Redis is not running, so `make` works
-without Docker.
+without Docker. The sentinel-backed tests skip unless `SENTINEL_ADDRS` is set;
+`make failover-test` runs them inside the compose network, which is where the
+master's address resolves.
+
+Other targets: `make cover` (coverage, generated code excluded, same filtering as
+the CI gate), `make saturate` (the throughput sweep), `make breakdown` (where the
+latency goes), `make ha-up` and `make failover` (Redis HA and the failover
+measurement), `make up-obs` (adds Prometheus and Grafana, kept out of `make up`
+so they don't compete with the service during a load run).

@@ -9,7 +9,6 @@ dist/
 # Test & coverage
 *.test
 *.out
-coverage.*
 
 # Go workspace
 go.work
