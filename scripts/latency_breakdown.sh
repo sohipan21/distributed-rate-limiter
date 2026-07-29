@@ -13,6 +13,10 @@
 # number needs redis itself. Deltas across the run, so a warm process doesn't
 # skew it.
 #
+# Output is scratch and gitignored: the numbers worth keeping live in
+# docs/tradeoffs.md, and the lua figure cross-checks against the
+# evalsha_usec_per_call column in loadtest/results/saturation/runs.csv.
+#
 #   ./scripts/latency_breakdown.sh [rate] [duration]
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,7 +24,7 @@ cd "$(dirname "$0")/.."
 RATE=${1:-${RATE:-10000}}
 DURATION=${2:-${DURATION:-20s}}
 NODES=${NODES:-"8081 8082 8083"}
-OUTDIR=${OUTDIR:-docs/latency}
+OUTDIR=${OUTDIR:-loadtest/results/latency}
 
 command -v k6 >/dev/null || { echo "k6 not installed"; exit 1; }
 command -v jq >/dev/null || { echo "jq not installed"; exit 1; }

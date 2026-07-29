@@ -125,7 +125,7 @@ func main() {
 		if *redisSentinel != "" {
 			// sentinel tracks which instance is master and the client follows
 			// promotions, so a dead master costs a short blip rather than an
-			// outage. see docs/06-failover.md for what that blip costs
+			// outage. see docs/tradeoffs.md for what that blip costs
 			sentinels := strings.Split(*redisSentinel, ",")
 			for i := range sentinels {
 				sentinels[i] = strings.TrimSpace(sentinels[i])

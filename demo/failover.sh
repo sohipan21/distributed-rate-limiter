@@ -128,7 +128,7 @@ else
   echo "  promoted replica started from a staler count."
 fi
 echo
-echo "see docs/06-failover.md for what this costs and when to care."
+echo "see docs/tradeoffs.md for what this costs and when to care."
 
 echo
 echo "stack is still up. 'docker compose -f docker-compose.ha.yml down' to stop it."

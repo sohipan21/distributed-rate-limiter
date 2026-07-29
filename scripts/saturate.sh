@@ -54,7 +54,7 @@ peak_cpu() {
                    END { printf "%.1f", max+0 }' "$2" 2>/dev/null
 }
 
-# One row per run. Every number the README, curve.md and the attribution
+# One row per run. Every number the README, curve.md and the tradeoffs
 # writeup quote is a column here — there is deliberately no per-run dump.
 CSV="$OUTDIR/runs.csv"
 echo "offered_rps,rep,achieved_rps,p50_ms,p99_ms,p999_ms,max_ms,error_rate,requests,dropped_iterations,vus_max,max_vus_configured,allowed,denied,evalsha_calls,evalsha_usec_per_call,nginx_cpu_pct,redis_cpu_pct,node_cpu_pct_max" > "$CSV"

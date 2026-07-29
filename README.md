@@ -31,7 +31,7 @@ make up && go test -v -run 'Overcounts|ExactUnder' ./internal/store/
 The naive version lets 500 requests through a limit of 100; the atomic one
 allows exactly 100, every time. Redis's clock is the single time source, so
 nodes never disagree about window boundaries. Why the counting works this way
-is in [docs/04-tradeoffs.md](docs/04-tradeoffs.md).
+is in [docs/tradeoffs.md](docs/tradeoffs.md).
 
 Two algorithms sit behind one `Limiter` interface, chosen per policy: token
 bucket (cheap, tolerates short bursts, the default) and sliding window
@@ -63,7 +63,7 @@ outage window (the fail-open policy), and nothing got through after the
 promotion that shouldn't have: the replica had every write that spent the
 bucket. That last figure is the easy case, not a guarantee: replication is
 asynchronous and these containers share a host.
-[docs/06-failover.md](docs/06-failover.md) covers what it would cost across
+[docs/tradeoffs.md](docs/tradeoffs.md#what-ha-costs) covers what it would cost across
 availability zones, and why paying `WAIT` on the hot path is the wrong trade.
 
 ## Try it
@@ -156,8 +156,8 @@ The proxy is what limits this, not the limiter. One node hit directly sustains
 is subtracting capacity, and it's the largest CPU consumer at saturation. Redis
 isn't close to its limit: script execution holds at ~22µs per call, about a
 third of one core at 14k rps. Working in
-[loadtest/results/saturation/attribution](loadtest/results/saturation/attribution/README.md),
-including what proxy config alone was worth (2x throughput, 44x better p99).
+[docs/tradeoffs.md](docs/tradeoffs.md#what-actually-limits-throughput), including
+what proxy config alone was worth (2x throughput, 44x better p99).
 
 Two caveats. k6, three nodes, nginx and Redis share ten cores on one laptop, so
 read these as shapes and not capacity numbers. And the generator's own footprint
@@ -184,7 +184,8 @@ moves under load; the Go handler adds ~2µs. At 12k rps the client-side Redis
 call takes 4.2ms waiting on a script that runs in 0.025ms, so 99.4% of it is
 round trip and pool wait. What grows under load is queueing, not computation,
 which is why the fix is fewer round trips and more proxy rather than faster Lua.
-Working and caveats in [docs/05-latency.md](docs/05-latency.md).
+Working and caveats in
+[docs/tradeoffs.md](docs/tradeoffs.md#where-the-round-trip-goes-under-load).
 
 ## Use it in your own app
 
@@ -221,7 +222,7 @@ pkg/sdk           the drop-in client and middleware
 grafana/          dashboard as code   loadtest/  k6 scripts and results
 demo/             the kill-redis and failover demos
 scripts/          saturation sweep, latency breakdown, plotting
-docs/             tradeoffs, latency breakdown, failover writeups
+docs/             tradeoffs: counting, degradation, latency, failover
 ```
 
 Redis-backed tests skip themselves when Redis is not running, so `make` works
