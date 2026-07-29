@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,6 +72,9 @@ func main() {
 	redisAddr := flag.String("redis", "", "redis address; empty runs in-memory limiters")
 	degrade := flag.String("degrade", "open", "redis-down behavior: open (allow) or closed (deny)")
 	configPath := flag.String("config", "", "yaml config file; empty uses built-in demo policies")
+	redisPool := flag.Int("redis-pool", 0, "redis connection pool size; 0 uses the client default (10 per CPU)")
+	redisSentinel := flag.String("redis-sentinel", "", "comma-separated sentinel addresses; takes precedence over -redis")
+	redisMaster := flag.String("redis-master-name", "mymaster", "sentinel master name, with -redis-sentinel")
 	flag.Parse()
 
 	policies := demoPolicies()
@@ -107,23 +112,51 @@ func main() {
 	mx := metrics.New()
 
 	var m *policy.Manager
-	if *redisAddr != "" {
+	if *redisAddr != "" || *redisSentinel != "" {
 		// short timeouts and no client retries bound worst-case decision
 		// latency to one attempt; the breaker owns what happens when redis
 		// is down, and stops paying even that once it's known-dead
-		rdb := redis.NewClient(&redis.Options{
-			Addr:         *redisAddr,
-			DialTimeout:  300 * time.Millisecond,
-			ReadTimeout:  300 * time.Millisecond,
-			WriteTimeout: 300 * time.Millisecond,
-			MaxRetries:   -1,
-		})
+		//
+		// 0 pool size leaves the go-redis default (10 per CPU). worth raising
+		// under load: once every connection is busy, callers queue for one and
+		// that wait lands in the decision latency, not in the redis timing
+		var rdb redis.UniversalClient
+		var redisDesc string
+		if *redisSentinel != "" {
+			// sentinel tracks which instance is master and the client follows
+			// promotions, so a dead master costs a short blip rather than an
+			// outage. see docs/tradeoffs.md for what that blip costs
+			sentinels := strings.Split(*redisSentinel, ",")
+			for i := range sentinels {
+				sentinels[i] = strings.TrimSpace(sentinels[i])
+			}
+			rdb = redis.NewFailoverClient(&redis.FailoverOptions{
+				MasterName:    *redisMaster,
+				SentinelAddrs: sentinels,
+				DialTimeout:   300 * time.Millisecond,
+				ReadTimeout:   300 * time.Millisecond,
+				WriteTimeout:  300 * time.Millisecond,
+				MaxRetries:    -1,
+				PoolSize:      *redisPool,
+			})
+			redisDesc = fmt.Sprintf("sentinel %v (master %q)", sentinels, *redisMaster)
+		} else {
+			rdb = redis.NewClient(&redis.Options{
+				Addr:         *redisAddr,
+				DialTimeout:  300 * time.Millisecond,
+				ReadTimeout:  300 * time.Millisecond,
+				WriteTimeout: 300 * time.Millisecond,
+				MaxRetries:   -1,
+				PoolSize:     *redisPool,
+			})
+			redisDesc = *redisAddr
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		if err := rdb.Ping(ctx).Err(); err != nil {
 			// degradation exists so this isn't fatal: boot degraded, recover
 			// when redis shows up
-			log.Printf("redis unreachable at %s (%v), starting degraded", *redisAddr, err)
+			log.Printf("redis unreachable at %s (%v), starting degraded", redisDesc, err)
 		}
 
 		// redis-backed keys let ops add keys at runtime; the memory
@@ -149,7 +182,7 @@ func main() {
 		})
 		factory := store.Factory(rdb, store.WithMode(mode), store.WithBreaker(br), store.WithObserver(mx))
 		m = policy.NewManagerWith(policies, factory, policy.WithObserver(mx))
-		log.Printf("limiter state in redis at %s (fail-%s when unreachable)", *redisAddr, *degrade)
+		log.Printf("limiter state in redis at %s (fail-%s when unreachable)", redisDesc, *degrade)
 	} else {
 		m = policy.NewManagerWith(policies, limiter.New, policy.WithObserver(mx))
 		log.Print("limiter state in memory (single node only)")

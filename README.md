@@ -1,6 +1,7 @@
 # Distributed Rate Limiter
 
 [![tests](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/test.yml/badge.svg)](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/test.yml)
+[![coverage](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/coverage.yml/badge.svg)](https://github.com/sohipan21/distributed-rate-limiter/actions/workflows/coverage.yml)
 
 Rate limiting as a service. Multiple stateless Go nodes share one Redis, so a
 limit like "100 requests per minute" holds no matter which node answers. It
@@ -30,7 +31,7 @@ make up && go test -v -run 'Overcounts|ExactUnder' ./internal/store/
 The naive version lets 500 requests through a limit of 100; the atomic one
 allows exactly 100, every time. Redis's clock is the single time source, so
 nodes never disagree about window boundaries. Why the counting works this way
-is in [docs/04-tradeoffs.md](docs/04-tradeoffs.md).
+is in [docs/tradeoffs.md](docs/tradeoffs.md).
 
 Two algorithms sit behind one `Limiter` interface, chosen per policy: token
 bucket (cheap, tolerates short bursts, the default) and sliding window
@@ -43,6 +44,27 @@ failure cheap. `-degrade closed` flips that for cases where over-limit is
 worse than down (login attempts, paid quotas). The tradeoffs doc covers when
 to pick which. `make demo` shows the whole thing live: enforcement, Redis
 killed, service still answering, enforcement back.
+
+Failing open covers Redis being *gone*. Not losing it in the first place is
+`docker-compose.ha.yml`: a replica and three sentinels behind the master, with
+nodes connecting through the sentinels (`-redis-sentinel`) so they follow a
+promotion instead of pointing at a corpse.
+
+```
+node1 ─┐
+node2 ─┼─> sentinel x3 ──> redis-master ──async──> redis-replica
+node3 ─┘   (quorum 2)          │                        │
+                               └────── promoted on ─────┘
+```
+
+`make failover` kills the master with writes in flight and measures what that
+costs. Promotion took ~5s, no request failed, 4 of 200 were allowed during the
+outage window (the fail-open policy), and nothing got through after the
+promotion that shouldn't have: the replica had every write that spent the
+bucket. That last figure is the easy case, not a guarantee: replication is
+asynchronous and these containers share a host.
+[docs/tradeoffs.md](docs/tradeoffs.md#what-ha-costs) covers what it would cost across
+availability zones, and why paying `WAIT` on the hot path is the wrong trade.
 
 ## Try it
 
@@ -99,27 +121,71 @@ api_keys:
 
 ## Results
 
-k6 against the full cluster (three nodes behind nginx, one Redis) on a single
-laptop. Localhost numbers, so read them as a shape, not a promise.
+k6 against the full cluster (three nodes behind nginx, one Redis) on one M2
+Pro, with the generator on the same laptop. Each rate is three separate 20s runs
+at a fixed arrival rate, reported as medians; `make saturate` reproduces the
+sweep and [`loadtest/results/saturation/`](loadtest/results/saturation) holds
+the per-run output.
 
-| offered | achieved | p50 | p95 | p99 | allowed / denied |
-|---------|----------|------|------|------|------------------|
-| 300 rps | 300 rps | 1.31ms | 2.97ms | 4.82ms | 5075 / 12903 |
-| 1000 rps | 1000 rps | 0.69ms | 0.95ms | 1.39ms | 5223 / 54777 |
-| 2000 rps | 2000 rps | 0.58ms | 0.78ms | 1.34ms | 5253 / 114749 |
+| offered | achieved | p50 | p99 (median) | p99 range | errors |
+|--------:|---------:|----:|-------------:|----------:|-------:|
+| 1,000 | 999 | 0.66ms | 3.25ms | 1.75–3.76ms | 0% |
+| 2,000 | 1,996 | 0.58ms | 6.87ms | 1.79–10.74ms | 0% |
+| 5,000 | 4,991 | 0.75ms | 4.59ms | 4.28–29.81ms | 0% |
+| 8,000 | 7,992 | 1.15ms | 8.26ms | 8.08–10.96ms | 0% |
+| 10,000 | 9,957 | 2.01ms | 32.34ms | 32.0–43.66ms | 0% |
+| 12,000 | 11,889 | 4.99ms | 61.11ms | 56.65–70.46ms | 0% |
+| 14,000 | 13,835 | 11.45ms | 74.92ms | 63.01–78.37ms | 0% |
+| 16,000 | 12,579 | 88.11ms | 702.84ms | 450.67–738.64ms | 0% |
+| 18,000 | 3,521 | 235.54ms | 13,330ms | 9,238–16,427ms | 10.15% |
 
-Allowed stays flat while denied grows: past a point the extra load just
-becomes 429s. No errors at any level.
+![saturation curve](loadtest/results/saturation/saturation.png)
 
-![load ramp](docs/img/loadtest-ramp.png)
+It tracks the offered rate to 14,000 rps at p99 75ms, then falls off a cliff:
+16k delivers only 12.6k and 18k collapses. p99 crosses 50ms at 12k, so the
+useful ceiling is 12k on a tail budget or 14k on throughput. Nothing errors
+until the cliff; past the knee requests queue and slow down instead of failing.
+Allowed stays flat near 3,100 across the sweep because the limits never changed;
+the extra load all becomes 429s.
 
-A fourth run killed Redis mid-test. 44,991 requests, zero failures. Allowed
-jumps while the service fails open, then enforcement snaps back when Redis
-returns.
+Each rate is measured three times and the table reports medians. A single run
+near the knee swings by 3x.
 
-![redis killed mid-test](docs/img/loadtest-kill-redis.png)
+The proxy is what limits this, not the limiter. One node hit directly sustains
+~15k rps at p99 32ms while three nodes behind nginx sustain ~13.8k, so the proxy
+is subtracting capacity, and it's the largest CPU consumer at saturation. Redis
+isn't close to its limit: script execution holds at ~22µs per call, about a
+third of one core at 14k rps. Working in
+[docs/tradeoffs.md](docs/tradeoffs.md#what-actually-limits-throughput), including
+what proxy config alone was worth (2x throughput, 44x better p99).
 
-`make loadtest` reproduces these.
+Two caveats. k6, three nodes, nginx and Redis share ten cores on one laptop, so
+read these as shapes and not capacity numbers. And the generator's own footprint
+moves the answer: at a fixed 12k offered, changing only k6's preallocated VUs
+moved p99 between 50ms and 285ms. The defaults in `loadtest/check.js` came out of
+that measurement, and it's the main reason I'd want a second machine before
+quoting any of this.
+
+### Where the time goes
+
+Splitting a `/check` at light load and at the knee (`make breakdown`):
+
+| layer | 2,000 rps | 12,000 rps | growth |
+|---|--------:|---------:|-------:|
+| lua inside redis | 0.021ms | 0.025ms | 1.2x |
+| redis round trip + pool wait | 0.131ms | 4.211ms | 32x |
+| handler + policy | 0.001ms | 0.002ms | 2x |
+| nginx + go http + wire | 0.689ms | 6.357ms | 9x |
+| end to end | 0.842ms | 10.595ms | 13x |
+
+The rate limiting is not the expensive part. Deciding a request (refill,
+compare, write back, set the TTL, all in one script) costs ~25µs and barely
+moves under load; the Go handler adds ~2µs. At 12k rps the client-side Redis
+call takes 4.2ms waiting on a script that runs in 0.025ms, so 99.4% of it is
+round trip and pool wait. What grows under load is queueing, not computation,
+which is why the fix is fewer round trips and more proxy rather than faster Lua.
+Working and caveats in
+[docs/tradeoffs.md](docs/tradeoffs.md#where-the-round-trip-goes-under-load).
 
 ## Use it in your own app
 
@@ -154,8 +220,18 @@ internal/grpcapi  grpc server        internal/httpapi  http handlers
 internal/metrics  prometheus metrics
 pkg/sdk           the drop-in client and middleware
 grafana/          dashboard as code   loadtest/  k6 scripts and results
-demo/             the kill-redis demo
+demo/             the kill-redis and failover demos
+scripts/          saturation sweep, latency breakdown, plotting
+docs/             tradeoffs: counting, degradation, latency, failover
 ```
 
 Redis-backed tests skip themselves when Redis is not running, so `make` works
-without Docker.
+without Docker. The sentinel-backed tests skip unless `SENTINEL_ADDRS` is set;
+`make failover-test` runs them inside the compose network, which is where the
+master's address resolves.
+
+Other targets: `make cover` (coverage, generated code excluded, same filtering as
+the CI gate), `make saturate` (the throughput sweep), `make breakdown` (where the
+latency goes), `make ha-up` and `make failover` (Redis HA and the failover
+measurement), `make up-obs` (adds Prometheus and Grafana, kept out of `make up`
+so they don't compete with the service during a load run).

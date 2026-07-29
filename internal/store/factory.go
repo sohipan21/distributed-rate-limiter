@@ -12,7 +12,7 @@ import (
 // sharing rdb — the in-memory limiter.New counts per process instead.
 // every limiter it builds shares one breaker: the first to notice a dead
 // redis flips them all into degraded mode
-func Factory(rdb *redis.Client, opts ...Option) limiter.Factory {
+func Factory(rdb redis.UniversalClient, opts ...Option) limiter.Factory {
 	var o options
 	for _, fn := range opts {
 		fn(&o)

@@ -1,0 +1,55 @@
+name: coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 10
+    env:
+      # gate sits a couple of points under the measured figure so ordinary
+      # churn doesn't fail the build, but a real drop does
+      THRESHOLD: "72.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Test with coverage
+        # redis is up, so the redis-backed tests run instead of skipping and
+        # the number reflects the code that actually matters
+        run: go test -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Check threshold
+        run: |
+          # generated protobuf has no tests and never will; leaving it in drags
+          # the number down ~9 points for no signal
+          grep -v '/gen/' coverage.out > coverage.filtered.out
+          pct=$(go tool cover -func=coverage.filtered.out | awk '/^total:/ {print $NF}' | tr -d '%')
+          echo "coverage (excluding gen/): ${pct}%"
+          echo "### Coverage: ${pct}% (gate ${THRESHOLD}%)" >> "$GITHUB_STEP_SUMMARY"
+          awk -v p="$pct" -v t="$THRESHOLD" 'BEGIN {
+            if (p + 0 < t + 0) {
+              printf "coverage %.1f%% is below the %.1f%% gate\n", p, t
+              exit 1
+            }
+            printf "coverage %.1f%% meets the %.1f%% gate\n", p, t
+          }'
+
+      - name: Per-package breakdown
+        if: always()
+        run: go tool cover -func=coverage.filtered.out | tail -20

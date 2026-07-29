@@ -9,12 +9,17 @@ dist/
 # Test & coverage
 *.test
 *.out
-coverage.*
 
 # Go workspace
 go.work
 go.work.sum
 vendor/
+
+# Python (scripts/)
+__pycache__/
+
+# latency breakdown scratch; the numbers that matter are in docs/tradeoffs.md
+loadtest/results/latency/
 
 # Env & secrets
 .env

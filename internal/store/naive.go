@@ -19,11 +19,11 @@ import (
 // to demonstrate the race; see TestNaiveBucketOvercountsUnderConcurrency.
 // the atomic lua implementation is the real one
 type NaiveTokenBucket struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 	cfg limiter.Config
 }
 
-func NewNaiveTokenBucket(rdb *redis.Client, cfg limiter.Config) *NaiveTokenBucket {
+func NewNaiveTokenBucket(rdb redis.UniversalClient, cfg limiter.Config) *NaiveTokenBucket {
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}

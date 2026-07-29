@@ -17,13 +17,13 @@ var tokenBucketScript string
 // as one atomic lua script inside redis, so concurrent requests can't lose
 // updates the way NaiveTokenBucket does
 type TokenBucket struct {
-	rdb    *redis.Client
+	rdb    redis.UniversalClient
 	cfg    limiter.Config
 	script *redis.Script
 	opts   options
 }
 
-func NewTokenBucket(rdb *redis.Client, cfg limiter.Config, opts ...Option) *TokenBucket {
+func NewTokenBucket(rdb redis.UniversalClient, cfg limiter.Config, opts ...Option) *TokenBucket {
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}
