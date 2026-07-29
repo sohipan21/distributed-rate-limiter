@@ -47,10 +47,10 @@ func (m *Memory) Lookup(ctx context.Context, key string) (Identity, bool) {
 // runtime without touching config. errors read as not-found; pair with a
 // Memory backend in a Chain so config keys keep working through an outage
 type Redis struct {
-	rdb *redis.Client
+	rdb redis.UniversalClient
 }
 
-func NewRedis(rdb *redis.Client) *Redis {
+func NewRedis(rdb redis.UniversalClient) *Redis {
 	return &Redis{rdb: rdb}
 }
 

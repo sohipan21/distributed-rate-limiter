@@ -18,13 +18,13 @@ var slidingWindowScript string
 // a sorted set. mirrors the in-memory SlidingWindow, keyed in redis so nodes
 // share one window
 type SlidingWindow struct {
-	rdb    *redis.Client
+	rdb    redis.UniversalClient
 	cfg    limiter.Config
 	script *redis.Script
 	opts   options
 }
 
-func NewSlidingWindow(rdb *redis.Client, cfg limiter.Config, opts ...Option) *SlidingWindow {
+func NewSlidingWindow(rdb redis.UniversalClient, cfg limiter.Config, opts ...Option) *SlidingWindow {
 	if err := cfg.Validate(); err != nil {
 		panic(err)
 	}

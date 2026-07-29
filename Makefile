@@ -1,4 +1,4 @@
-.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest saturate breakdown proto demo
+.PHONY: all fmt vet test bench build run tidy up up-obs down loadtest saturate breakdown proto demo ha-up ha-down failover failover-test
 
 BASE_URL ?= http://localhost:8080
 RATE ?= 300
@@ -51,6 +51,25 @@ breakdown:
 
 demo:
 	./demo/kill-redis.sh
+
+# redis HA: master + replica + 3 sentinels
+ha-up:
+	docker compose -f docker-compose.ha.yml up -d --build --wait
+
+ha-down:
+	docker compose -f docker-compose.ha.yml down
+
+failover:
+	./demo/failover.sh
+
+# sentinel hands out the master's address as a container hostname, which only
+# resolves inside the compose network — so the sentinel-backed tests run in a
+# container on that network rather than from the host
+failover-test:
+	docker run --rm --network distributed-rate-limiter_default \
+		-v "$$PWD":/src -w /src \
+		-e SENTINEL_ADDRS=sentinel1:26379,sentinel2:26379,sentinel3:26379 \
+		golang:1.26-alpine go test ./internal/store/ -run Failover -v
 
 proto:
 	PATH="$(HOME)/go/bin:$$PATH" protoc \

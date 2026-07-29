@@ -1,0 +1,14 @@
+# Config for the failover measurement only (demo/failover.sh).
+#
+# The window is an hour on purpose. The test spends a bucket, kills the master,
+# and counts how many extra requests get through after the promotion — so the
+# bucket must not meaningfully refill while that happens. At 100 per hour the
+# refill is 0.028 tokens/sec, meaning a 20-second failover returns about half a
+# token. Anything above that is state the failover actually lost.
+policies:
+  default: {limit: 100, window: 1h}
+  tiers:
+    free: {limit: 100, window: 1h}
+
+api_keys:
+  k_failover: {account: failover-test, tier: free}

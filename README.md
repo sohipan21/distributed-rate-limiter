@@ -44,6 +44,27 @@ worse than down (login attempts, paid quotas). The tradeoffs doc covers when
 to pick which. `make demo` shows the whole thing live: enforcement, Redis
 killed, service still answering, enforcement back.
 
+Failing open covers Redis being *gone*. Not losing it in the first place is
+`docker-compose.ha.yml`: a replica and three sentinels behind the master, with
+nodes connecting through the sentinels (`-redis-sentinel`) so they follow a
+promotion instead of pointing at a corpse.
+
+```
+node1 ─┐
+node2 ─┼─> sentinel x3 ──> redis-master ──async──> redis-replica
+node3 ─┘   (quorum 2)          │                        │
+                               └────── promoted on ─────┘
+```
+
+`make failover` kills the master with writes in flight and measures the cost.
+Measured: promotion in ~5s, no failed requests, 4 of 200 allowed during the
+outage window (the fail-open policy, by design), and **zero over-admission
+after the promotion** — the replica had every write that spent the bucket.
+That last number is the good case rather than a guarantee, since replication is
+asynchronous and these containers share a host; what it would cost across
+availability zones, and why paying `WAIT` on the hot path is the wrong trade
+here, is in [docs/06-failover.md](docs/06-failover.md).
+
 ## Try it
 
 ```
